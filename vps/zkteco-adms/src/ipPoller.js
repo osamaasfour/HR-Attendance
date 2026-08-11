@@ -8,8 +8,8 @@ const { Timestamp } = require('firebase-admin/firestore');
 const { fetchAttendanceLogs, clearAttendanceLogOnDevice } = require('./zkIpClient');
 const { processFingerprintPunch } = require('./punchProcessor');
 
-const DEFAULT_INTERVAL_MS = 60_000;
-const DEFAULT_TIMEOUT_MS = 120_000;
+const DEFAULT_INTERVAL_MS = 90_000;
+const DEFAULT_TIMEOUT_MS = 300_000;
 
 let timer = null;
 let running = false;
@@ -59,6 +59,35 @@ async function pollOneDevice(db, device, timeoutMs) {
   const host = String(device.host).trim();
   const port = Number(device.port) || 4370;
   const afterMs = syncAfterMs(device);
+
+  // One-shot: clear huge device log so subsequent polls can succeed over WAN
+  if (device.clearDeviceLogNextPoll === true) {
+    try {
+      console.log(`[ip-poll] clearDeviceLogNextPoll for ${device.serialNumber || device.id}`);
+      await clearAttendanceLogOnDevice({
+        host,
+        port,
+        timeoutMs: Math.min(timeoutMs, 60000),
+        password: device.deviceSecret,
+        commKey: device.deviceSecret,
+      });
+      await db.collection('fingerprintDevices').doc(device.id).update({
+        clearDeviceLogNextPoll: false,
+        ipSyncAfter: Timestamp.now(),
+        lastPollAt: Timestamp.now(),
+        lastPollError: null,
+        lastSeenAt: Timestamp.now(),
+      });
+      console.log(`[ip-poll] device log cleared — next polls will pull new punches only`);
+    } catch (e) {
+      const msg = formatError(e).slice(0, 500);
+      await db.collection('fingerprintDevices').doc(device.id).update({
+        lastPollAt: Timestamp.now(),
+        lastPollError: `Clear log failed: ${msg}`,
+      });
+      return { ok: false, error: msg };
+    }
+  }
 
   let logs;
   try {

@@ -314,6 +314,8 @@ export interface FingerprintDevice {
    * Default / missing = false (download without emptying the device).
    */
   clearDeviceLogAfterSync?: boolean;
+  /** If true, next IP poll clears the device attendance log (then resets to false). */
+  clearDeviceLogNextPoll?: boolean;
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
 }

@@ -1,6 +1,10 @@
 /**
  * ZKTeco IP:4370 client with Comm Key (CMD_AUTH) support.
  * Uses @graphland/zkteco (handles CMD_ACK_UNAUTH → CMD_AUTH).
+ *
+ * Note: getAttendances() always downloads the FULL device log. Over the public
+ * internet that often times out if the machine holds thousands of old punches.
+ * Prefer clearing old logs (or clearDeviceLogNextPoll) once, then keep logs small.
  */
 
 'use strict';
@@ -16,7 +20,6 @@ function loadZKTecoClient() {
   return ZKTecoClientPromise;
 }
 
-/** Device Comm Key is numeric (0 = none). Alphanumeric ADMS secrets → 0. */
 function parseCommKey(secret) {
   if (secret == null || secret === '') return 0;
   const s = String(secret).trim();
@@ -65,9 +68,6 @@ function isTimeoutError(msg) {
   return /TIME\s*OUT|timeout|ETIMEDOUT|PACKETS REMAIN/i.test(String(msg || ''));
 }
 
-/**
- * @returns {{ pin: string, punchTime: Date, externalPunchId: string, rawLine: string } | null}
- */
 function normalizeAttendanceLog(entry) {
   if (!entry || typeof entry !== 'object') return null;
 
@@ -106,112 +106,107 @@ function normalizeAttendanceLog(entry) {
   return { pin, punchTime, externalPunchId, rawLine };
 }
 
-function createClient({ host, port, timeoutMs, key }) {
-  return loadZKTecoClient().then((ZKTecoClient) => {
-    return new ZKTecoClient({
-      ip: host,
-      port: Number(port) || 4370,
-      timeout: Number(timeoutMs) || 120000,
-      udpPort: 20000 + Math.floor(Math.random() * 20000),
-      commKey: key,
-    });
+async function createClient({ host, port, timeoutMs, key }) {
+  const ZKTecoClient = await loadZKTecoClient();
+  return new ZKTecoClient({
+    ip: host,
+    port: Number(port) || 4370,
+    timeout: Number(timeoutMs) || 300000,
+    udpPort: 20000 + Math.floor(Math.random() * 20000),
+    commKey: key,
   });
 }
 
-async function downloadAttendances(client, host, port) {
-  // Pause terminal UI during bulk download (ZK best practice over slow WAN)
-  if (typeof client.disableDevice === 'function') {
+async function downloadOnce(client, host, port) {
+  if (typeof client.freeData === 'function') {
     try {
-      await client.disableDevice();
-    } catch (e) {
-      console.warn(`[zk-ip] disableDevice warning: ${formatError(e)}`);
+      await client.freeData();
+    } catch {
+      /* ignore */
     }
   }
 
-  try {
-    const rows = await client.getAttendances((received, total) => {
-      if (total && received % 50 === 0) {
-        console.log(`[zk-ip] download ${host}:${port} ${received}/${total}`);
-      }
-    });
-    return Array.isArray(rows) ? rows : [];
-  } finally {
-    if (typeof client.enableDevice === 'function') {
-      try {
-        await client.enableDevice();
-      } catch (e) {
-        console.warn(`[zk-ip] enableDevice warning: ${formatError(e)}`);
-      }
+  if (typeof client.getInfo === 'function') {
+    try {
+      const info = await client.getInfo();
+      console.log(
+        `[zk-ip] device info ${host}:${port} users=${info?.userCounts} logs=${info?.logCounts} cap=${info?.logCapacity}`,
+      );
+    } catch (e) {
+      console.warn(`[zk-ip] getInfo warning: ${formatError(e)}`);
     }
   }
+
+  const rows = await client.getAttendances((received, total) => {
+    if (total && (received === total || received % 100 === 0)) {
+      console.log(`[zk-ip] download ${host}:${port} ${received}/${total}`);
+    }
+  });
+  return Array.isArray(rows) ? rows : [];
 }
 
 /**
- * Fetch attendance logs. Pass device Comm Key as `commKey` / `password`.
- * Does NOT clear the device log.
+ * Fetch attendance logs. Does NOT clear the device log.
  */
 async function fetchAttendanceLogs({
   host,
   port = 4370,
-  timeoutMs = 120000,
+  timeoutMs = 300000,
   password,
   commKey,
 }) {
   if (!host) throw new Error('host is required');
 
   const key = parseCommKey(commKey != null ? commKey : password);
-  const client = await createClient({ host, port, timeoutMs, key });
+  let lastErr;
 
-  try {
-    await client.connect();
-    console.log(
-      `[zk-ip] connected ${host}:${port} (commKey ${key === 0 ? 'off' : 'set'})`,
-    );
-
-    let rows;
+  // Fresh connection for each attempt (WAN transfers often fail mid-stream)
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const client = await createClient({ host, port, timeoutMs, key });
     try {
-      rows = await downloadAttendances(client, host, port);
+      await client.connect();
+      console.log(
+        `[zk-ip] connected ${host}:${port} attempt=${attempt} (commKey ${key === 0 ? 'off' : 'set'})`,
+      );
+      const rows = await downloadOnce(client, host, port);
+      console.log(`[zk-ip] fetched ${rows.length} log(s) from ${host}:${port}`);
+      return rows.map(normalizeAttendanceLog).filter(Boolean);
     } catch (e) {
+      lastErr = e;
       const msg = formatError(e);
-      if (isTimeoutError(msg)) {
-        console.warn(`[zk-ip] download timeout — retrying once: ${msg}`);
-        rows = await downloadAttendances(client, host, port);
-      } else {
-        throw e;
+      console.warn(`[zk-ip] attempt ${attempt} failed: ${msg}`);
+      if (isUnauthError(msg)) break;
+      if (!isTimeoutError(msg) && attempt === 1) break;
+    } finally {
+      try {
+        await client.disconnect();
+      } catch {
+        /* ignore */
       }
     }
-
-    console.log(`[zk-ip] fetched ${rows.length} log(s) from ${host}:${port}`);
-    return rows.map(normalizeAttendanceLog).filter(Boolean);
-  } catch (e) {
-    const msg = formatError(e);
-    if (isUnauthError(msg)) {
-      throw asError(
-        e,
-        `Auth failed for ${host}:${port}. Set Device Comm Key in Admin to match the machine (Menu → Comm → Security → Comm Key), or set Comm Key to 0 on the device`,
-      );
-    }
-    if (isTimeoutError(msg)) {
-      throw asError(
-        e,
-        `Download timed out from ${host}:${port} (large log over internet). ` +
-          'Increase IP_POLL_TIMEOUT_MS, keep Comm Key 0, and consider enabling “Clear machine log after download” once after a successful sync — or clear old logs on the device',
-      );
-    }
-    throw asError(e, `Failed talking to ${host}:${port}`);
-  } finally {
-    try {
-      await client.disconnect();
-    } catch {
-      /* ignore */
-    }
   }
+
+  const msg = formatError(lastErr);
+  if (isUnauthError(msg)) {
+    throw asError(
+      lastErr,
+      `Auth failed for ${host}:${port}. Set Device Comm Key in Admin to match the machine`,
+    );
+  }
+  if (isTimeoutError(msg)) {
+    throw asError(
+      lastErr,
+      `Download timed out from ${host}:${port}. The device log is too large for a stable internet pull. ` +
+        'Clear old attendance on the machine (or use Admin → Clear log on next poll), then new punches will sync',
+    );
+  }
+  throw asError(lastErr, `Failed talking to ${host}:${port}`);
 }
 
 async function clearAttendanceLogOnDevice({
   host,
   port = 4370,
-  timeoutMs = 120000,
+  timeoutMs = 60000,
   password,
   commKey,
 }) {

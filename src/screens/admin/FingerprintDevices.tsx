@@ -278,6 +278,34 @@ export default function FingerprintDevicesScreen() {
     ]);
   };
 
+  const queueClearLogNextPoll = (dev: FingerprintDevice) => {
+    showAlert(
+      t('fingerprintClearLogNextPoll'),
+      t('fingerprintClearLogNextPollConfirm', { name: dev.name }),
+      [
+        { text: t('cancel'), style: 'cancel' },
+        {
+          text: t('fingerprintClearLogNextPoll'),
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              try {
+                await updateDoc(doc(db, 'fingerprintDevices', dev.id), {
+                  clearDeviceLogNextPoll: true,
+                  updatedAt: Timestamp.now(),
+                });
+                await load();
+                showAlert(t('success'), t('fingerprintClearLogNextPollQueued'));
+              } catch (e: any) {
+                showAlert(t('error'), e?.message || t('actionFailed'));
+              }
+            })();
+          },
+        },
+      ],
+    );
+  };
+
   const formOpen = creating || !!editing;
   const setupIsIp = setupDevice ? deviceConnectionType(setupDevice) === 'ip' : false;
 
@@ -568,6 +596,11 @@ export default function FingerprintDevicesScreen() {
                           {t('fingerprintPollError')}: {dev.lastPollError}
                         </Text>
                       )}
+                      {dev.clearDeviceLogNextPoll === true && (
+                        <Text className="text-warning-700 text-[11px] mt-0.5">
+                          {t('fingerprintClearLogNextPollQueued')}
+                        </Text>
+                      )}
                     </>
                   )}
                 </View>
@@ -600,6 +633,16 @@ export default function FingerprintDevicesScreen() {
                     {t('zktecoSetupTitle')}
                   </Text>
                 </TouchableOpacity>
+                {ctype === 'ip' && (
+                  <TouchableOpacity
+                    onPress={() => queueClearLogNextPoll(dev)}
+                    className="bg-warning-50 px-3 py-2 rounded-lg mr-2 mb-2"
+                  >
+                    <Text className="text-warning-700 text-xs font-semibold">
+                      {t('fingerprintClearLogNextPoll')}
+                    </Text>
+                  </TouchableOpacity>
+                )}
                 <TouchableOpacity
                   onPress={() => confirmDelete(dev)}
                   className="bg-danger-50 px-3 py-2 rounded-lg mb-2"

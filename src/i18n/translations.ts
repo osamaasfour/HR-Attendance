@@ -720,6 +720,10 @@ const en = {
   fingerprintClearLogAfterSync: 'Clear machine log after download',
   fingerprintClearLogAfterSyncHint:
     'Off by default — the app downloads punches and leaves logs on the device. Turn on only if the terminal memory fills up.',
+  fingerprintClearLogNextPoll: 'Clear log on next poll',
+  fingerprintClearLogNextPollConfirm:
+    'This will DELETE all attendance records currently stored on “{name}” on the next server poll (about 1–2 minutes). Old punches not yet synced will be lost. Continue?',
+  fingerprintClearLogNextPollQueued: 'Clear queued — next poll will empty the device log.',
   fingerprintPollError: 'Poll error',
   zktecoSetupTitle: 'ZKTeco setup',
   zktecoServerUrl: 'ADMS server URL',
@@ -1444,6 +1448,10 @@ const ar: Record<TranslationKey, string> = {
   fingerprintClearLogAfterSync: 'مسح سجل الجهاز بعد التحميل',
   fingerprintClearLogAfterSyncHint:
     'معطّل افتراضياً — التطبيق يحمّل البصمات ويترك السجل على الجهاز. فعّله فقط إذا امتلأت ذاكرة الجهاز.',
+  fingerprintClearLogNextPoll: 'مسح السجل في الاستعلام التالي',
+  fingerprintClearLogNextPollConfirm:
+    'سيتم حذف كل سجلات الحضور على الجهاز «{name}» في الاستعلام التالي (خلال دقيقة أو دقيقتين). البصمات القديمة غير المزامَنة ستُفقد. هل تريد المتابعة؟',
+  fingerprintClearLogNextPollQueued: 'تم جدولة المسح — الاستعلام التالي سيُفرّغ سجل الجهاز.',
   fingerprintPollError: 'خطأ الاستعلام',
   zktecoSetupTitle: 'إعداد ZKTeco',
   zktecoServerUrl: 'رابط خادم ADMS',
