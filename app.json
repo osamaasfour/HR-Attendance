@@ -27,7 +27,7 @@
         "backgroundColor": "#1E3A5F"
       },
       "package": "com.hrattendance.app",
-      "versionCode": 2,
+      "versionCode": 3,
       "edgeToEdgeEnabled": true,
       "permissions": [
         "ACCESS_COARSE_LOCATION",
