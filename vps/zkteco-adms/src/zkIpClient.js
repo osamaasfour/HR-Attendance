@@ -8,6 +8,36 @@
 const ZKLib = require('zk-attendance-sdk');
 const ZKAttendanceClient = ZKLib.default || ZKLib;
 
+/** Turn SDK/plain-object failures into a readable string */
+function formatError(e) {
+  if (e == null) return 'Unknown error';
+  if (typeof e === 'string') return e;
+  if (e instanceof Error) {
+    const parts = [e.message, e.code, e.errno].filter(Boolean);
+    return parts.join(' ') || e.stack || 'Error';
+  }
+  if (typeof e === 'object') {
+    if (typeof e.message === 'string' && e.message) return e.message;
+    if (typeof e.err === 'string' && e.err) return e.err;
+    if (typeof e.error === 'string' && e.error) return e.error;
+    if (e.code != null) return `code=${e.code}${e.errno != null ? ` errno=${e.errno}` : ''}`;
+    try {
+      const json = JSON.stringify(e);
+      if (json && json !== '{}') return json.slice(0, 480);
+    } catch {
+      /* ignore */
+    }
+  }
+  return String(e);
+}
+
+function asError(e, prefix) {
+  const msg = formatError(e);
+  const err = new Error(prefix ? `${prefix}: ${msg}` : msg);
+  err.cause = e;
+  return err;
+}
+
 /**
  * Normalize a single attendance log entry from the SDK into a punch shape.
  * @returns {{ pin: string, punchTime: Date, externalPunchId: string, rawLine: string } | null}
@@ -61,8 +91,20 @@ async function fetchAttendanceLogs({ host, port = 4370, timeoutMs = 10000 }) {
 
   const client = new ZKAttendanceClient(host, Number(port) || 4370, timeoutMs, 5200);
   try {
-    await client.createSocket();
-    const result = await client.getAttendances();
+    try {
+      await client.createSocket();
+    } catch (e) {
+      throw asError(
+        e,
+        `Cannot connect to ${host}:${port} (check port forward / firewall / device online)`,
+      );
+    }
+    let result;
+    try {
+      result = await client.getAttendances();
+    } catch (e) {
+      throw asError(e, `Connected but failed to read attendance from ${host}:${port}`);
+    }
     const rows = Array.isArray(result)
       ? result
       : Array.isArray(result?.data)
@@ -104,4 +146,5 @@ module.exports = {
   fetchAttendanceLogs,
   clearAttendanceLogOnDevice,
   normalizeAttendanceLog,
+  formatError,
 };

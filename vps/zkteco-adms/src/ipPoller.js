@@ -14,6 +14,27 @@ const DEFAULT_TIMEOUT_MS = 10_000;
 let timer = null;
 let running = false;
 
+function formatError(e) {
+  if (e == null) return 'Unknown error';
+  if (typeof e === 'string') return e;
+  if (e instanceof Error) {
+    const parts = [e.message, e.code, e.errno].filter(Boolean);
+    return parts.join(' ') || 'Error';
+  }
+  if (typeof e === 'object') {
+    if (typeof e.message === 'string' && e.message) return e.message;
+    if (typeof e.err === 'string' && e.err) return e.err;
+    if (typeof e.error === 'string' && e.error) return e.error;
+    try {
+      const json = JSON.stringify(e);
+      if (json && json !== '{}') return json.slice(0, 480);
+    } catch {
+      /* ignore */
+    }
+  }
+  return String(e);
+}
+
 function syncAfterMs(device) {
   const ts = device.ipSyncAfter;
   if (!ts) return 0;
@@ -43,11 +64,11 @@ async function pollOneDevice(db, device, timeoutMs) {
   try {
     logs = await fetchAttendanceLogs({ host, port, timeoutMs });
   } catch (e) {
-    const msg = e?.message || String(e);
+    const msg = formatError(e).slice(0, 500);
     console.error(`[ip-poll] ${device.serialNumber || device.id} @ ${host}:${port} — ${msg}`);
     await db.collection('fingerprintDevices').doc(device.id).update({
       lastPollAt: Timestamp.now(),
-      lastPollError: msg.slice(0, 500),
+      lastPollError: msg,
     });
     return { ok: false, error: msg };
   }
@@ -115,7 +136,7 @@ async function pollOneDevice(db, device, timeoutMs) {
         e?.message || e,
       );
       await db.collection('fingerprintDevices').doc(device.id).update({
-        lastPollError: `Synced OK but clear failed: ${(e?.message || String(e)).slice(0, 400)}`,
+        lastPollError: `Synced OK but clear failed: ${formatError(e).slice(0, 400)}`,
       });
     }
   }
