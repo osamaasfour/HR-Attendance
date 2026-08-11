@@ -52,6 +52,7 @@ function normalizeAttendanceLog(entry) {
 
 /**
  * Fetch attendance logs from a device over TCP.
+ * Does NOT clear the device log — call clearAttendanceLogOnDevice separately if needed.
  * @param {{ host: string, port?: number, timeoutMs?: number }} opts
  * @returns {Promise<Array<{ pin: string, punchTime: Date, externalPunchId: string, rawLine: string }>>}
  */
@@ -77,7 +78,30 @@ async function fetchAttendanceLogs({ host, port = 4370, timeoutMs = 10000 }) {
   }
 }
 
+/**
+ * Clear attendance log on the physical device (optional — off by default in Admin).
+ */
+async function clearAttendanceLogOnDevice({ host, port = 4370, timeoutMs = 10000 }) {
+  if (!host) throw new Error('host is required');
+  const client = new ZKAttendanceClient(host, Number(port) || 4370, timeoutMs, 5200);
+  try {
+    await client.createSocket();
+    if (typeof client.clearAttendanceLog !== 'function') {
+      throw new Error('clearAttendanceLog not supported by SDK');
+    }
+    await client.clearAttendanceLog();
+    console.log(`[zk-ip] cleared attendance log on ${host}:${port}`);
+  } finally {
+    try {
+      await client.disconnect();
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
 module.exports = {
   fetchAttendanceLogs,
+  clearAttendanceLogOnDevice,
   normalizeAttendanceLog,
 };

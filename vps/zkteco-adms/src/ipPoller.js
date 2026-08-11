@@ -5,7 +5,7 @@
 'use strict';
 
 const { Timestamp } = require('firebase-admin/firestore');
-const { fetchAttendanceLogs } = require('./zkIpClient');
+const { fetchAttendanceLogs, clearAttendanceLogOnDevice } = require('./zkIpClient');
 const { processFingerprintPunch } = require('./punchProcessor');
 
 const DEFAULT_INTERVAL_MS = 60_000;
@@ -101,9 +101,29 @@ async function pollOneDevice(db, device, timeoutMs) {
 
   await db.collection('fingerprintDevices').doc(device.id).update(update);
 
+  if (device.clearDeviceLogAfterSync === true) {
+    try {
+      await clearAttendanceLogOnDevice({ host, port, timeoutMs });
+      // After clearing, reset watermark so we don't skip future punches incorrectly
+      // (device starts empty; new punches will be after "now")
+      await db.collection('fingerprintDevices').doc(device.id).update({
+        ipSyncAfter: Timestamp.now(),
+      });
+    } catch (e) {
+      console.error(
+        `[ip-poll] clear log failed SN=${device.serialNumber}:`,
+        e?.message || e,
+      );
+      await db.collection('fingerprintDevices').doc(device.id).update({
+        lastPollError: `Synced OK but clear failed: ${(e?.message || String(e)).slice(0, 400)}`,
+      });
+    }
+  }
+
   console.log(
     `[ip-poll] ${device.serialNumber || device.id} @ ${host}:${port} — ` +
-      `${logs.length} logs, ${newer.length} new, ${processed} processed`,
+      `${logs.length} logs, ${newer.length} new, ${processed} processed` +
+      (device.clearDeviceLogAfterSync === true ? ' (cleared device log)' : ' (kept device log)'),
   );
 
   return { ok: true, processed, newer: newer.length, total: logs.length };

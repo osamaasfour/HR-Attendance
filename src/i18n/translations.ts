@@ -713,6 +713,9 @@ const en = {
   fingerprintDevicePort: 'Port',
   fingerprintIpHint:
     'VPS must reach this host:port (router port forward). ZKTeco / ZK-compatible TCP only.',
+  fingerprintClearLogAfterSync: 'Clear machine log after download',
+  fingerprintClearLogAfterSyncHint:
+    'Off by default — the app downloads punches and leaves logs on the device. Turn on only if the terminal memory fills up.',
   fingerprintPollError: 'Poll error',
   zktecoSetupTitle: 'ZKTeco setup',
   zktecoServerUrl: 'ADMS server URL',
@@ -1430,6 +1433,9 @@ const ar: Record<TranslationKey, string> = {
   fingerprintDevicePort: 'المنفذ',
   fingerprintIpHint:
     'يجب أن يصل الخادم إلى هذا المضيف:المنفذ (توجيه منفذ على الراوتر). أجهزة ZKTeco / المتوافقة فقط.',
+  fingerprintClearLogAfterSync: 'مسح سجل الجهاز بعد التحميل',
+  fingerprintClearLogAfterSyncHint:
+    'معطّل افتراضياً — التطبيق يحمّل البصمات ويترك السجل على الجهاز. فعّله فقط إذا امتلأت ذاكرة الجهاز.',
   fingerprintPollError: 'خطأ الاستعلام',
   zktecoSetupTitle: 'إعداد ZKTeco',
   zktecoServerUrl: 'رابط خادم ADMS',

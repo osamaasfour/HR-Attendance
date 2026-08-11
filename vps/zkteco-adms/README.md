@@ -32,6 +32,8 @@ Employee PIN on the machine = **Employee ID** (`00001`, `00002`, …).
 
 IP mode supports **ZKTeco / ZK-compatible** TCP protocol only (not unrelated brands).
 
+**Machine log:** By default the poller **downloads without clearing** the device attendance log (`clearDeviceLogAfterSync` is off). Enable that flag per device in Admin only if the terminal memory fills up.
+
 ---
 
 ## One-time Firebase setup

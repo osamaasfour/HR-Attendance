@@ -79,6 +79,7 @@ export default function FingerprintDevicesScreen() {
   const [connectionType, setConnectionType] = useState<FingerprintConnectionType>('adms');
   const [host, setHost] = useState('');
   const [port, setPort] = useState(String(DEFAULT_IP_PORT));
+  const [clearDeviceLogAfterSync, setClearDeviceLogAfterSync] = useState(false);
   const [active, setActive] = useState(true);
 
   const load = useCallback(async () => {
@@ -146,6 +147,7 @@ export default function FingerprintDevicesScreen() {
     setConnectionType('adms');
     setHost('');
     setPort(String(DEFAULT_IP_PORT));
+    setClearDeviceLogAfterSync(false);
     setActive(true);
     setCreating(false);
     setEditing(null);
@@ -168,6 +170,7 @@ export default function FingerprintDevicesScreen() {
     setConnectionType(deviceConnectionType(dev));
     setHost(dev.host || '');
     setPort(String(dev.port || DEFAULT_IP_PORT));
+    setClearDeviceLogAfterSync(dev.clearDeviceLogAfterSync === true);
     setActive(dev.active !== false);
   };
 
@@ -218,6 +221,8 @@ export default function FingerprintDevicesScreen() {
         connectionType,
         host: connectionType === 'ip' ? trimmedHost : null,
         port: connectionType === 'ip' ? portNum : null,
+        clearDeviceLogAfterSync:
+          connectionType === 'ip' ? clearDeviceLogAfterSync : false,
         deviceSecret:
           connectionType === 'adms'
             ? deviceSecret.trim()
@@ -455,6 +460,20 @@ export default function FingerprintDevicesScreen() {
               <Text className="text-[11px] text-surface-500 leading-4 mb-2">
                 {t('fingerprintIpHint')}
               </Text>
+              <View className="flex-row items-start justify-between mb-3">
+                <View className="flex-1 pr-3">
+                  <Text className="text-sm text-surface-700">
+                    {t('fingerprintClearLogAfterSync')}
+                  </Text>
+                  <Text className="text-[11px] text-surface-500 mt-0.5 leading-4">
+                    {t('fingerprintClearLogAfterSyncHint')}
+                  </Text>
+                </View>
+                <Switch
+                  value={clearDeviceLogAfterSync}
+                  onValueChange={setClearDeviceLogAfterSync}
+                />
+              </View>
             </>
           )}
 

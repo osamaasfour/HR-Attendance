@@ -309,6 +309,11 @@ export interface FingerprintDevice {
   lastPollError?: string | null;
   /** Watermark: only process IP punches strictly after this time */
   ipSyncAfter?: Timestamp | null;
+  /**
+   * IP mode only. If true, clear attendance log on the machine after a successful pull.
+   * Default / missing = false (download without emptying the device).
+   */
+  clearDeviceLogAfterSync?: boolean;
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
 }
