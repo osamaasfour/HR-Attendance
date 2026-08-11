@@ -14,7 +14,8 @@
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "firebase-admin": "^12.7.0",
-    "zk-attendance-sdk": "^2.3.0"
+    "zk-attendance-sdk": "^2.3.0",
+    "zklib": "^0.1.2"
   },
   "private": true
 }

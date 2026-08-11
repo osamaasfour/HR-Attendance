@@ -118,7 +118,9 @@ Deploy updated `firestore.rules` (connectionType on create) if not already live.
 | Admin connection type | IP (port 4370) |
 | Host | Public IP (or hostname) reachable from the VPS |
 | Port | `4370` (default) |
-| Router | Forward WAN:4370 → device LAN:4370; allow VPS egress |
+| Router | Forward **TCP and UDP** WAN:4370 → device LAN:4370; allow VPS egress |
+
+The Docker service uses **host networking** so it can reach port-forwarded devices the same way as the VPS itself.
 
 After save, wait ~1 minute (or watch logs). **Last poll** should update; errors show under the device card.
 

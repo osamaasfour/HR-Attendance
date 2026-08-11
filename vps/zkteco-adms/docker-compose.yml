@@ -1,12 +1,13 @@
-version: '3.9'
+# Host networking: same network path as the VPS (where `nc` to the device works).
+# Bridge NAT often breaks ZK TCP/UDP to remote port-forwarded devices.
+# nginx still proxies to 127.0.0.1:3001 on the host.
 
 services:
   zkteco-adms:
     build: .
     container_name: zkteco-adms
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:3001:3001"   # Only expose to localhost; nginx fronts it
+    network_mode: host
     volumes:
       - ./secrets/firebase-sa.json:/run/secrets/firebase-sa.json:ro
     environment:

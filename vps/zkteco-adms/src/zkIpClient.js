@@ -1,12 +1,14 @@
 /**
- * Thin ZKTeco TCP client wrapper (port 4370).
- * Uses zk-attendance-sdk for ZK / ZK-compatible devices.
+ * Thin ZKTeco TCP/UDP client wrapper (port 4370).
+ * Primary: zk-attendance-sdk (TCP, then UDP on ECONNREFUSED).
+ * Fallback: zklib over UDP when TCP CONNECT fails (common behind port-forward).
  */
 
 'use strict';
 
-const ZKLib = require('zk-attendance-sdk');
-const ZKAttendanceClient = ZKLib.default || ZKLib;
+const ZKLibSdk = require('zk-attendance-sdk');
+const ZKAttendanceClient = ZKLibSdk.default || ZKLibSdk;
+const ZKLibUdp = require('zklib');
 
 /** Turn SDK/plain-object failures into a readable string */
 function formatError(e) {
@@ -20,6 +22,10 @@ function formatError(e) {
     if (typeof e.message === 'string' && e.message) return e.message;
     if (typeof e.err === 'string' && e.err) return e.err;
     if (typeof e.error === 'string' && e.error) return e.error;
+    if (e.command) {
+      const inner = formatError(e.err || e.cause);
+      return `${e.command}${e.ip ? ` @ ${e.ip}` : ''}: ${inner}`;
+    }
     if (e.code != null) return `code=${e.code}${e.errno != null ? ` errno=${e.errno}` : ''}`;
     try {
       const json = JSON.stringify(e);
@@ -39,7 +45,7 @@ function asError(e, prefix) {
 }
 
 /**
- * Normalize a single attendance log entry from the SDK into a punch shape.
+ * Normalize a single attendance log entry into a punch shape.
  * @returns {{ pin: string, punchTime: Date, externalPunchId: string, rawLine: string } | null}
  */
 function normalizeAttendanceLog(entry) {
@@ -56,7 +62,12 @@ function normalizeAttendanceLog(entry) {
 
   let punchTime = null;
   const rawTime =
-    entry.recordTime ?? entry.timestamp ?? entry.attTime ?? entry.time ?? null;
+    entry.recordTime ??
+    entry.timestamp ??
+    entry.attTime ??
+    entry.time ??
+    entry.timestamp ??
+    null;
   if (rawTime instanceof Date) {
     punchTime = rawTime;
   } else if (typeof rawTime === 'number') {
@@ -80,44 +91,17 @@ function normalizeAttendanceLog(entry) {
   return { pin, punchTime, externalPunchId, rawLine };
 }
 
-/**
- * Fetch attendance logs from a device over TCP.
- * Does NOT clear the device log — call clearAttendanceLogOnDevice separately if needed.
- * @param {{ host: string, port?: number, timeoutMs?: number }} opts
- * @returns {Promise<Array<{ pin: string, punchTime: Date, externalPunchId: string, rawLine: string }>>}
- */
-async function fetchAttendanceLogs({ host, port = 4370, timeoutMs = 10000 }) {
-  if (!host) throw new Error('host is required');
-
-  // Do NOT bind a fixed local UDP port (5200) — inside Docker that often breaks
-  // the TCP→UDP fallback after a plain TCP connect succeeds (nc works, ZK fails).
-  const client = new ZKAttendanceClient(
-    host,
-    Number(port) || 4370,
-    Number(timeoutMs) || 10000,
-  );
+async function fetchViaSdk({ host, port, timeoutMs }) {
+  const client = new ZKAttendanceClient(host, Number(port) || 4370, Number(timeoutMs) || 15000);
   try {
-    try {
-      await client.createSocket();
-    } catch (e) {
-      throw asError(
-        e,
-        `Cannot connect to ${host}:${port} (check port forward / firewall / device online)`,
-      );
-    }
+    await client.createSocket();
     const connType =
       typeof client.getConnectionType === 'function'
         ? client.getConnectionType()
         : 'unknown';
-    console.log(`[zk-ip] connected ${host}:${port} via ${connType}`);
+    console.log(`[zk-ip] SDK connected ${host}:${port} via ${connType}`);
 
-    let result;
-    try {
-      result = await client.getAttendances();
-    } catch (e) {
-      throw asError(e, `Connected but failed to read attendance from ${host}:${port}`);
-    }
-    // Some SDK versions return { data, err } without throwing
+    const result = await client.getAttendances();
     if (result && result.err) {
       throw asError(result.err, `Read attendance returned error from ${host}:${port}`);
     }
@@ -131,21 +115,88 @@ async function fetchAttendanceLogs({ host, port = 4370, timeoutMs = 10000 }) {
     try {
       await client.disconnect();
     } catch {
-      /* ignore disconnect errors */
+      /* ignore */
     }
+  }
+}
+
+function promisifyConnect(zk) {
+  return new Promise((resolve, reject) => {
+    zk.connect((err) => {
+      if (err) reject(err);
+      else resolve();
+    });
+  });
+}
+
+function promisifyGetAttendance(zk) {
+  return new Promise((resolve, reject) => {
+    zk.getAttendance((err, data) => {
+      if (err) reject(err);
+      else resolve(data || []);
+    });
+  });
+}
+
+async function fetchViaUdpZklib({ host, port, timeoutMs }) {
+  const inport = 20000 + Math.floor(Math.random() * 20000);
+  const zk = new ZKLibUdp({
+    ip: host,
+    port: Number(port) || 4370,
+    inport,
+    timeout: Number(timeoutMs) || 15000,
+    attendanceParser: 'v6.60',
+    connectionType: 'udp',
+  });
+
+  await promisifyConnect(zk);
+  console.log(`[zk-ip] zklib UDP connected ${host}:${port} (local ${inport})`);
+  try {
+    const rows = await promisifyGetAttendance(zk);
+    return (Array.isArray(rows) ? rows : []).map(normalizeAttendanceLog).filter(Boolean);
+  } finally {
+    try {
+      zk.disconnect();
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+/**
+ * Fetch attendance logs from a device over TCP/UDP.
+ * Does NOT clear the device log.
+ */
+async function fetchAttendanceLogs({ host, port = 4370, timeoutMs = 15000 }) {
+  if (!host) throw new Error('host is required');
+
+  let sdkErr;
+  try {
+    return await fetchViaSdk({ host, port, timeoutMs });
+  } catch (e) {
+    sdkErr = e;
+    console.warn(
+      `[zk-ip] SDK failed for ${host}:${port} — trying UDP fallback: ${formatError(e)}`,
+    );
+  }
+
+  try {
+    return await fetchViaUdpZklib({ host, port, timeoutMs });
+  } catch (udpErr) {
+    throw asError(
+      udpErr,
+      `Cannot connect to ${host}:${port} (SDK: ${formatError(sdkErr)}; UDP: ${formatError(udpErr)}). ` +
+        'Forward BOTH TCP and UDP 4370 to the device; ensure no other PC software is connected.',
+    );
   }
 }
 
 /**
  * Clear attendance log on the physical device (optional — off by default in Admin).
  */
-async function clearAttendanceLogOnDevice({ host, port = 4370, timeoutMs = 10000 }) {
+async function clearAttendanceLogOnDevice({ host, port = 4370, timeoutMs = 15000 }) {
   if (!host) throw new Error('host is required');
-  const client = new ZKAttendanceClient(
-    host,
-    Number(port) || 4370,
-    Number(timeoutMs) || 10000,
-  );
+  const client = new ZKAttendanceClient(host, Number(port) || 4370, Number(timeoutMs) || 15000);
   try {
     await client.createSocket();
     if (typeof client.clearAttendanceLog !== 'function') {
