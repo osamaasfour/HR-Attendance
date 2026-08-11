@@ -57,6 +57,14 @@ function asError(e, prefix) {
   return err;
 }
 
+function isUnauthError(msg) {
+  return /UNAUTH|CMD_ACK_UNAUTH|not authorized|auth required/i.test(String(msg || ''));
+}
+
+function isTimeoutError(msg) {
+  return /TIME\s*OUT|timeout|ETIMEDOUT|PACKETS REMAIN/i.test(String(msg || ''));
+}
+
 /**
  * @returns {{ pin: string, punchTime: Date, externalPunchId: string, rawLine: string } | null}
  */
@@ -98,6 +106,46 @@ function normalizeAttendanceLog(entry) {
   return { pin, punchTime, externalPunchId, rawLine };
 }
 
+function createClient({ host, port, timeoutMs, key }) {
+  return loadZKTecoClient().then((ZKTecoClient) => {
+    return new ZKTecoClient({
+      ip: host,
+      port: Number(port) || 4370,
+      timeout: Number(timeoutMs) || 120000,
+      udpPort: 20000 + Math.floor(Math.random() * 20000),
+      commKey: key,
+    });
+  });
+}
+
+async function downloadAttendances(client, host, port) {
+  // Pause terminal UI during bulk download (ZK best practice over slow WAN)
+  if (typeof client.disableDevice === 'function') {
+    try {
+      await client.disableDevice();
+    } catch (e) {
+      console.warn(`[zk-ip] disableDevice warning: ${formatError(e)}`);
+    }
+  }
+
+  try {
+    const rows = await client.getAttendances((received, total) => {
+      if (total && received % 50 === 0) {
+        console.log(`[zk-ip] download ${host}:${port} ${received}/${total}`);
+      }
+    });
+    return Array.isArray(rows) ? rows : [];
+  } finally {
+    if (typeof client.enableDevice === 'function') {
+      try {
+        await client.enableDevice();
+      } catch (e) {
+        console.warn(`[zk-ip] enableDevice warning: ${formatError(e)}`);
+      }
+    }
+  }
+}
+
 /**
  * Fetch attendance logs. Pass device Comm Key as `commKey` / `password`.
  * Does NOT clear the device log.
@@ -105,38 +153,52 @@ function normalizeAttendanceLog(entry) {
 async function fetchAttendanceLogs({
   host,
   port = 4370,
-  timeoutMs = 15000,
+  timeoutMs = 120000,
   password,
   commKey,
 }) {
   if (!host) throw new Error('host is required');
 
   const key = parseCommKey(commKey != null ? commKey : password);
-  const ZKTecoClient = await loadZKTecoClient();
-  const client = new ZKTecoClient({
-    ip: host,
-    port: Number(port) || 4370,
-    timeout: Number(timeoutMs) || 15000,
-    udpPort: 20000 + Math.floor(Math.random() * 20000),
-    commKey: key,
-  });
+  const client = await createClient({ host, port, timeoutMs, key });
 
   try {
     await client.connect();
     console.log(
       `[zk-ip] connected ${host}:${port} (commKey ${key === 0 ? 'off' : 'set'})`,
     );
-    const rows = await client.getAttendances();
-    return (Array.isArray(rows) ? rows : []).map(normalizeAttendanceLog).filter(Boolean);
+
+    let rows;
+    try {
+      rows = await downloadAttendances(client, host, port);
+    } catch (e) {
+      const msg = formatError(e);
+      if (isTimeoutError(msg)) {
+        console.warn(`[zk-ip] download timeout — retrying once: ${msg}`);
+        rows = await downloadAttendances(client, host, port);
+      } else {
+        throw e;
+      }
+    }
+
+    console.log(`[zk-ip] fetched ${rows.length} log(s) from ${host}:${port}`);
+    return rows.map(normalizeAttendanceLog).filter(Boolean);
   } catch (e) {
     const msg = formatError(e);
-    if (/UNAUTH|unauth|auth/i.test(msg) || key === 0) {
+    if (isUnauthError(msg)) {
       throw asError(
         e,
-        `Cannot connect to ${host}:${port}. Device requires Comm Key — set the same numeric key in Admin (IP device) as on the machine (Menu → Comm → Security → Comm Key), or set Comm Key to 0 on the device`,
+        `Auth failed for ${host}:${port}. Set Device Comm Key in Admin to match the machine (Menu → Comm → Security → Comm Key), or set Comm Key to 0 on the device`,
       );
     }
-    throw asError(e, `Cannot connect to ${host}:${port}`);
+    if (isTimeoutError(msg)) {
+      throw asError(
+        e,
+        `Download timed out from ${host}:${port} (large log over internet). ` +
+          'Increase IP_POLL_TIMEOUT_MS, keep Comm Key 0, and consider enabling “Clear machine log after download” once after a successful sync — or clear old logs on the device',
+      );
+    }
+    throw asError(e, `Failed talking to ${host}:${port}`);
   } finally {
     try {
       await client.disconnect();
@@ -149,20 +211,13 @@ async function fetchAttendanceLogs({
 async function clearAttendanceLogOnDevice({
   host,
   port = 4370,
-  timeoutMs = 15000,
+  timeoutMs = 120000,
   password,
   commKey,
 }) {
   if (!host) throw new Error('host is required');
   const key = parseCommKey(commKey != null ? commKey : password);
-  const ZKTecoClient = await loadZKTecoClient();
-  const client = new ZKTecoClient({
-    ip: host,
-    port: Number(port) || 4370,
-    timeout: Number(timeoutMs) || 15000,
-    udpPort: 20000 + Math.floor(Math.random() * 20000),
-    commKey: key,
-  });
+  const client = await createClient({ host, port, timeoutMs, key });
   try {
     await client.connect();
     await client.clearAttendanceLog();

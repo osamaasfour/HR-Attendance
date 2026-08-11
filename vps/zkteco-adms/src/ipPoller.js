@@ -9,7 +9,7 @@ const { fetchAttendanceLogs, clearAttendanceLogOnDevice } = require('./zkIpClien
 const { processFingerprintPunch } = require('./punchProcessor');
 
 const DEFAULT_INTERVAL_MS = 60_000;
-const DEFAULT_TIMEOUT_MS = 15_000;
+const DEFAULT_TIMEOUT_MS = 120_000;
 
 let timer = null;
 let running = false;
