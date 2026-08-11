@@ -1,0 +1,22 @@
+version: '3.9'
+
+services:
+  zkteco-adms:
+    build: .
+    container_name: zkteco-adms
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3001:3001"   # Only expose to localhost; nginx fronts it
+    volumes:
+      - ./secrets/firebase-sa.json:/run/secrets/firebase-sa.json:ro
+    environment:
+      PORT: "3001"
+      FIREBASE_PROJECT_ID: "${FIREBASE_PROJECT_ID:-ecf-hr}"
+      GOOGLE_APPLICATION_CREDENTIALS: "/run/secrets/firebase-sa.json"
+    env_file:
+      - .env
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

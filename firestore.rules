@@ -1,0 +1,251 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isSelf(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function callerDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function callerRole() {
+      return callerDoc().role;
+    }
+
+    function callerTenant() {
+      return callerDoc().get('tenantId', 'default');
+    }
+
+    function isAdmin() {
+      return isSignedIn() && callerRole() == 'admin';
+    }
+
+    function isPlatformAdmin() {
+      return isSignedIn() && callerDoc().get('platformAdmin', false) == true;
+    }
+
+    function isManager() {
+      return isSignedIn() && callerRole() == 'manager';
+    }
+
+    function isAdminOrManager() {
+      return isAdmin() || isManager();
+    }
+
+    /** Same tenant, with legacy docs (no tenantId) treated as default */
+    function resourceTenant() {
+      return resource.data.get('tenantId', 'default');
+    }
+
+    function requestTenant() {
+      return request.resource.data.get('tenantId', 'default');
+    }
+
+    function sameTenant() {
+      return isSignedIn() && resourceTenant() == callerTenant();
+    }
+
+    function writesOwnTenant() {
+      return isSignedIn() && requestTenant() == callerTenant();
+    }
+
+    match /tenants/{tenantId} {
+      // Public read so Sign Up can resolve invite codes before/after Auth
+      allow read: if true;
+      // Only platform owner may create new company workspaces
+      allow create: if isPlatformAdmin()
+        && request.resource.data.keys().hasAll(['name', 'slug']);
+      allow update: if isPlatformAdmin()
+        || (isAdmin() && callerTenant() == tenantId
+            // Company admins cannot change license / suspension fields
+            && !request.resource.data.diff(resource.data).affectedKeys()
+                .hasAny(['licenseExpiresAt', 'maxUsers', 'licenseKey', 'licenseNotes', 'active', 'plan', 'slug']));
+      allow delete: if isPlatformAdmin() && tenantId != 'default';
+    }
+
+    match /users/{userId} {
+      allow read: if isSignedIn()
+        && (isSelf(userId)
+            || isPlatformAdmin()
+            || (resource.data.get('tenantId', 'default') == callerTenant()));
+      allow create: if (isSelf(userId)
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.role in ['employee', 'admin']
+          && request.resource.data.keys().hasAny(['tenantId'])
+          && request.resource.data.get('platformAdmin', false) == false)
+        || (isPlatformAdmin()
+          && request.resource.data.uid == userId
+          && request.resource.data.role in ['employee', 'manager', 'admin'])
+        || (isAdmin()
+          && request.resource.data.uid == userId
+          && request.resource.data.get('tenantId', 'default') == callerTenant()
+          && request.resource.data.role in ['employee', 'manager', 'admin']
+          && request.resource.data.get('platformAdmin', false) == false);
+      allow update: if isPlatformAdmin()
+        || (isAdmin()
+          && resource.data.get('tenantId', 'default') == callerTenant()
+          && request.resource.data.get('platformAdmin', false) == resource.data.get('platformAdmin', false))
+        || (isSelf(userId)
+            && request.resource.data.role == resource.data.role
+            && request.resource.data.uid == resource.data.uid
+            && request.resource.data.get('tenantId', 'default')
+                 == resource.data.get('tenantId', 'default')
+            && request.resource.data.get('managerId', null) == resource.data.get('managerId', null)
+            && request.resource.data.employeeId == resource.data.employeeId
+            && request.resource.data.get('branchId', null) == resource.data.get('branchId', null)
+            && request.resource.data.get('departmentId', null) == resource.data.get('departmentId', null)
+            && request.resource.data.get('workLocationIds', []) == resource.data.get('workLocationIds', [])
+            && (
+              request.resource.data.get('platformAdmin', false) == resource.data.get('platformAdmin', false)
+              || (
+                request.resource.data.platformAdmin == true
+                && request.auth.token.email is string
+                && request.auth.token.email.matches('(?i)^oasfour77@gmail\\.com$')
+              )
+            ));
+      allow delete: if isPlatformAdmin() || (isAdmin() && sameTenant());
+    }
+
+    // Legacy company settings — keep for migration; prefer tenants/*
+    match /companySettings/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /branches/{branchId} {
+      allow read: if isPlatformAdmin() || (isSignedIn() && sameTenant());
+      allow create: if isPlatformAdmin() || (isAdmin() && writesOwnTenant());
+      allow update, delete: if isPlatformAdmin() || (isAdmin() && sameTenant());
+    }
+
+    match /departments/{departmentId} {
+      allow read: if isPlatformAdmin() || (isSignedIn() && sameTenant());
+      allow create: if isPlatformAdmin() || (isAdmin() && writesOwnTenant());
+      allow update, delete: if isPlatformAdmin() || (isAdmin() && sameTenant());
+    }
+
+    match /workLocations/{locationId} {
+      allow read: if isPlatformAdmin() || (isSignedIn() && sameTenant());
+      allow create: if isPlatformAdmin()
+        || (isAdmin() && writesOwnTenant()
+          && request.resource.data.keys().hasAll(['name', 'latitude', 'longitude', 'radiusMeters', 'tenantId']));
+      allow update, delete: if isPlatformAdmin() || (isAdmin() && sameTenant());
+    }
+
+    match /fingerprintDevices/{deviceId} {
+      allow read: if isPlatformAdmin() || (isAdmin() && sameTenant());
+      allow create: if isPlatformAdmin()
+        || (isAdmin() && writesOwnTenant()
+          && request.resource.data.keys().hasAll([
+            'name', 'serialNumber', 'workLocationId', 'tenantId', 'connectionType'
+          ]));
+      allow update, delete: if isPlatformAdmin() || (isAdmin() && sameTenant());
+    }
+
+    match /fingerprintPunchLog/{logId} {
+      allow read: if isPlatformAdmin() || (isAdmin() && sameTenant());
+      allow write: if false;
+    }
+
+    match /workShifts/{shiftId} {
+      allow read: if isPlatformAdmin() || (isSignedIn() && sameTenant());
+      allow create: if isPlatformAdmin()
+        || (isAdmin() && writesOwnTenant()
+          && request.resource.data.keys().hasAll(['name', 'workStart', 'workEnd', 'tenantId']));
+      allow update, delete: if isPlatformAdmin() || (isAdmin() && sameTenant());
+    }
+
+    match /attendance/{recordId} {
+      allow read: if isSignedIn()
+        && sameTenant()
+        && (resource.data.userId == request.auth.uid || isAdminOrManager());
+      allow create: if isSignedIn()
+        && writesOwnTenant()
+        && request.resource.data.userId == request.auth.uid;
+      allow update: if isSignedIn()
+        && sameTenant()
+        && (resource.data.userId == request.auth.uid || isAdmin());
+      allow delete: if isAdmin() && sameTenant();
+    }
+
+    match /hrRequests/{requestId} {
+      allow read: if isSignedIn()
+        && sameTenant()
+        && (resource.data.userId == request.auth.uid
+            || isAdmin()
+            || (isManager() && resource.data.managerId == request.auth.uid));
+      allow create: if isSignedIn()
+        && writesOwnTenant()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.status == 'pending';
+      allow update: if sameTenant() && (
+        isAdmin()
+        || (isManager() && resource.data.managerId == request.auth.uid)
+        || (isSignedIn()
+            && resource.data.userId == request.auth.uid
+            && resource.data.status == 'pending'
+            && request.resource.data.status == 'pending')
+      );
+      allow delete: if isAdmin() && sameTenant();
+    }
+
+    match /leaveRequests/{requestId} {
+      allow read: if isSignedIn()
+        && sameTenant()
+        && (resource.data.userId == request.auth.uid || isAdminOrManager());
+      allow create: if isSignedIn()
+        && writesOwnTenant()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.status == 'pending';
+      allow update: if isAdmin() && sameTenant();
+      allow delete: if isAdmin() && sameTenant();
+    }
+
+    match /notifications/{notifId} {
+      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn();
+      allow update: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+    }
+
+    match /compensation/{userId} {
+      allow read: if isSelf(userId) || (isAdmin() && sameTenant());
+      allow write: if isAdmin() && (writesOwnTenant() || sameTenant());
+    }
+
+    match /loans/{loanId} {
+      allow read: if isSignedIn()
+        && sameTenant()
+        && (resource.data.userId == request.auth.uid || isAdmin());
+      allow write: if isAdmin() && (writesOwnTenant() || sameTenant());
+    }
+
+    match /payrollSettings/{docId} {
+      allow read: if isAdmin() || isPlatformAdmin();
+      allow write: if isAdmin() || isPlatformAdmin();
+    }
+
+    match /appSettings/{docId} {
+      allow read: if isAdmin();
+      allow write: if isAdmin();
+    }
+
+    match /payslips/{slipId} {
+      allow read: if isSignedIn()
+        && sameTenant()
+        && (resource.data.userId == request.auth.uid || isAdmin());
+      allow write: if isAdmin() && (writesOwnTenant() || sameTenant());
+    }
+
+    match /payrollRuns/{runId} {
+      allow read: if isAdmin() && sameTenant();
+      allow write: if isAdmin() && writesOwnTenant();
+    }
+  }
+}

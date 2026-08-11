@@ -1,0 +1,54 @@
+{
+  "expo": {
+    "name": "HR Attendance",
+    "slug": "hr-attendance-app",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#1E3A5F"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.hrattendance.app",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "This app needs location access to verify you are within the office premises for attendance.",
+        "NSFaceIDUsageDescription": "This app uses Face ID or fingerprint to verify your identity when clocking in or out.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "This app needs location access to verify you are within the office premises for attendance."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#1E3A5F"
+      },
+      "package": "com.hrattendance.app",
+      "versionCode": 2,
+      "edgeToEdgeEnabled": true,
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "USE_BIOMETRIC",
+        "USE_FINGERPRINT"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro",
+      "output": "single"
+    },
+    "plugins": [
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "This app uses Face ID or fingerprint to verify your identity when clocking in or out."
+        }
+      ]
+    ],
+    "scheme": "hrattendance"
+  }
+}

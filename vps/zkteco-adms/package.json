@@ -1,0 +1,20 @@
+{
+  "name": "zkteco-adms",
+  "version": "1.0.0",
+  "description": "ZKTeco ADMS fingerprint punch receiver — writes to Firestore via Admin SDK",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "firebase-admin": "^12.7.0",
+    "zk-attendance-sdk": "^2.3.0"
+  },
+  "private": true
+}
