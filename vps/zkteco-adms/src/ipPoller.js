@@ -62,7 +62,13 @@ async function pollOneDevice(db, device, timeoutMs) {
 
   let logs;
   try {
-    logs = await fetchAttendanceLogs({ host, port, timeoutMs });
+    logs = await fetchAttendanceLogs({
+      host,
+      port,
+      timeoutMs,
+      password: device.deviceSecret,
+      commKey: device.deviceSecret,
+    });
   } catch (e) {
     const msg = formatError(e).slice(0, 500);
     console.error(`[ip-poll] ${device.serialNumber || device.id} @ ${host}:${port} — ${msg}`);
@@ -124,7 +130,13 @@ async function pollOneDevice(db, device, timeoutMs) {
 
   if (device.clearDeviceLogAfterSync === true) {
     try {
-      await clearAttendanceLogOnDevice({ host, port, timeoutMs });
+      await clearAttendanceLogOnDevice({
+        host,
+        port,
+        timeoutMs,
+        password: device.deviceSecret,
+        commKey: device.deviceSecret,
+      });
       // After clearing, reset watermark so we don't skip future punches incorrectly
       // (device starts empty; new punches will be after "now")
       await db.collection('fingerprintDevices').doc(device.id).update({

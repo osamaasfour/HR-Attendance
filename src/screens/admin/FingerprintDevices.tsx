@@ -309,6 +309,10 @@ export default function FingerprintDevicesScreen() {
               <Text className="text-sm font-mono text-surface-800 mb-2">
                 {setupDevice.host}:{setupDevice.port || DEFAULT_IP_PORT}
               </Text>
+              <Text className="text-xs text-surface-600 mb-1">{t('fingerprintDeviceCommKey')}</Text>
+              <Text className="text-sm font-mono text-surface-800 mb-2">
+                {setupDevice.deviceSecret || '0'}
+              </Text>
               <Text className="text-xs text-surface-600 mb-1">{t('zktecoSerialNumber')}</Text>
               <Text className="text-sm font-semibold text-surface-800 mb-2">
                 {setupDevice.serialNumber}
@@ -361,8 +365,15 @@ export default function FingerprintDevicesScreen() {
                   key={opt.id}
                   onPress={() => {
                     setConnectionType(opt.id);
-                    if (opt.id === 'adms' && !deviceSecret) {
-                      setDeviceSecret(generateDeviceSecret());
+                    if (opt.id === 'adms') {
+                      if (!deviceSecret || /^\d+$/.test(deviceSecret)) {
+                        setDeviceSecret(generateDeviceSecret());
+                      }
+                    } else if (opt.id === 'ip') {
+                      // Comm Key is numeric; don't keep ADMS alphanumeric secret
+                      if (!/^\d*$/.test(deviceSecret)) {
+                        setDeviceSecret('0');
+                      }
                     }
                   }}
                   className={`flex-1 px-3 py-2.5 rounded-xl mr-2 ${
@@ -457,6 +468,17 @@ export default function FingerprintDevicesScreen() {
                 keyboardType="number-pad"
                 placeholder={String(DEFAULT_IP_PORT)}
               />
+              <Text className="text-xs text-surface-400 mb-1">{t('fingerprintDeviceCommKey')}</Text>
+              <TextInput
+                className="border border-surface-200 rounded-xl px-3 h-11 mb-1 font-mono"
+                value={deviceSecret}
+                onChangeText={setDeviceSecret}
+                keyboardType="number-pad"
+                placeholder={t('fingerprintDeviceCommKeyPlaceholder')}
+              />
+              <Text className="text-[11px] text-surface-500 leading-4 mb-2">
+                {t('fingerprintDeviceCommKeyHint')}
+              </Text>
               <Text className="text-[11px] text-surface-500 leading-4 mb-2">
                 {t('fingerprintIpHint')}
               </Text>

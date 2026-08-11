@@ -712,7 +712,11 @@ const en = {
   fingerprintDeviceHostPlaceholder: '93.127.x.x or hostname',
   fingerprintDevicePort: 'Port',
   fingerprintIpHint:
-    'VPS must reach this host:port (router port forward). ZKTeco / ZK-compatible TCP only.',
+    'VPS must reach this host:port (router port forward TCP+UDP). ZKTeco / ZK-compatible only.',
+  fingerprintDeviceCommKey: 'Device Comm Key',
+  fingerprintDeviceCommKeyPlaceholder: '0',
+  fingerprintDeviceCommKeyHint:
+    'Numeric password from the machine (Menu → Comm → Security → Comm Key). Must match or connection fails with UNAUTH. Use 0 if Comm Key is disabled on the device.',
   fingerprintClearLogAfterSync: 'Clear machine log after download',
   fingerprintClearLogAfterSyncHint:
     'Off by default — the app downloads punches and leaves logs on the device. Turn on only if the terminal memory fills up.',
@@ -724,7 +728,7 @@ const en = {
   zktecoSetupSteps:
     'On the ZKTeco device: Menu → Comm → Cloud Server → set URL above, enable ADMS push, enter SN and communication key. Register each employee on the device using the same PIN as Employee ID (00001).',
   zktecoIpSetupSteps:
-    'Ensure the terminal is reachable from the VPS at Host:Port (default 4370). Employee PIN on the machine must match Employee ID (00001). The server polls every minute — no cloud URL needed on the device.',
+    'Ensure the terminal is reachable from the VPS at Host:Port (TCP+UDP 4370). Set Device Comm Key to the same number as on the machine (or 0 if disabled). Employee PIN = Employee ID (00001). The server polls every minute.',
   fingerprintEnrollmentTitle: 'Employee PINs for machine',
   fingerprintEnrollmentHint:
     'Create each user on the ZKTeco terminal with PIN = Employee ID below, then enroll their fingerprint.',
@@ -1432,7 +1436,11 @@ const ar: Record<TranslationKey, string> = {
   fingerprintDeviceHostPlaceholder: '93.127.x.x أو اسم مضيف',
   fingerprintDevicePort: 'المنفذ',
   fingerprintIpHint:
-    'يجب أن يصل الخادم إلى هذا المضيف:المنفذ (توجيه منفذ على الراوتر). أجهزة ZKTeco / المتوافقة فقط.',
+    'يجب أن يصل الخادم إلى هذا المضيف:المنفذ (توجيه TCP وUDP). أجهزة ZKTeco / المتوافقة فقط.',
+  fingerprintDeviceCommKey: 'مفتاح اتصال الجهاز (Comm Key)',
+  fingerprintDeviceCommKeyPlaceholder: '0',
+  fingerprintDeviceCommKeyHint:
+    'رقم من الجهاز (القائمة → الاتصالات → الأمان → Comm Key). يجب أن يطابق وإلا يفشل الاتصال (UNAUTH). استخدم 0 إذا كان معطّلاً على الجهاز.',
   fingerprintClearLogAfterSync: 'مسح سجل الجهاز بعد التحميل',
   fingerprintClearLogAfterSyncHint:
     'معطّل افتراضياً — التطبيق يحمّل البصمات ويترك السجل على الجهاز. فعّله فقط إذا امتلأت ذاكرة الجهاز.',
