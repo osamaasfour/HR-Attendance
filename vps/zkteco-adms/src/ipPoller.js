@@ -58,7 +58,7 @@ async function loadIpDevices(db) {
 async function pollOneDevice(db, device, timeoutMs) {
   const host = String(device.host).trim();
   const port = Number(device.port) || 4370;
-  const afterMs = syncAfterMs(device);
+  let afterMs = syncAfterMs(device);
 
   // One-shot: clear huge device log so subsequent polls can succeed over WAN
   if (device.clearDeviceLogNextPoll === true) {
@@ -73,12 +73,16 @@ async function pollOneDevice(db, device, timeoutMs) {
       });
       await db.collection('fingerprintDevices').doc(device.id).update({
         clearDeviceLogNextPoll: false,
-        ipSyncAfter: Timestamp.now(),
+        // Do NOT set ipSyncAfter to server "now" — device clocks are often
+        // minutes behind, which would hide brand-new punches after a clear.
+        ipSyncAfter: null,
         lastPollAt: Timestamp.now(),
         lastPollError: null,
         lastSeenAt: Timestamp.now(),
       });
-      console.log(`[ip-poll] device log cleared — next polls will pull new punches only`);
+      console.log(`[ip-poll] device log cleared — watermark reset`);
+      afterMs = 0;
+      device.ipSyncAfter = null;
     } catch (e) {
       const msg = formatError(e).slice(0, 500);
       await db.collection('fingerprintDevices').doc(device.id).update({
@@ -108,16 +112,31 @@ async function pollOneDevice(db, device, timeoutMs) {
     return { ok: false, error: msg };
   }
 
+  // Allow small device-clock skew (up to 2 hours behind server watermark)
+  const skewMs = 2 * 60 * 60 * 1000;
+  const cutoff = afterMs > 0 ? afterMs - skewMs : 0;
+
   const newer = logs
-    .filter((l) => l.punchTime.getTime() > afterMs)
+    .filter((l) => l.punchTime.getTime() > cutoff)
     .sort((a, b) => a.punchTime.getTime() - b.punchTime.getTime());
+
+  console.log(
+    `[ip-poll] ${device.serialNumber || device.id}: ${logs.length} fetched, ` +
+      `${newer.length} after watermark (cutoff=${cutoff ? new Date(cutoff).toISOString() : 'none'})`,
+  );
+  if (logs.length > 0 && newer.length === 0) {
+    const sample = logs[logs.length - 1];
+    console.warn(
+      `[ip-poll] all punches filtered — sample pin=${sample?.pin} time=${sample?.punchTime?.toISOString?.()}`,
+    );
+  }
 
   let maxPunch = afterMs;
   let processed = 0;
 
   for (const log of newer) {
     try {
-      await processFingerprintPunch({
+      const result = await processFingerprintPunch({
         db,
         device,
         rawLine: log.rawLine,
@@ -127,6 +146,9 @@ async function pollOneDevice(db, device, timeoutMs) {
       });
       processed += 1;
       maxPunch = Math.max(maxPunch, log.punchTime.getTime());
+      console.log(
+        `[ip-poll] punch PIN=${log.pin} → ${result?.action || result?.reason || 'ok'}`,
+      );
     } catch (e) {
       console.error(
         `[ip-poll] punch error SN=${device.serialNumber} PIN=${log.pin}:`,
