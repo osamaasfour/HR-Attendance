@@ -89,7 +89,13 @@ function normalizeAttendanceLog(entry) {
 async function fetchAttendanceLogs({ host, port = 4370, timeoutMs = 10000 }) {
   if (!host) throw new Error('host is required');
 
-  const client = new ZKAttendanceClient(host, Number(port) || 4370, timeoutMs, 5200);
+  // Do NOT bind a fixed local UDP port (5200) — inside Docker that often breaks
+  // the TCP→UDP fallback after a plain TCP connect succeeds (nc works, ZK fails).
+  const client = new ZKAttendanceClient(
+    host,
+    Number(port) || 4370,
+    Number(timeoutMs) || 10000,
+  );
   try {
     try {
       await client.createSocket();
@@ -99,11 +105,21 @@ async function fetchAttendanceLogs({ host, port = 4370, timeoutMs = 10000 }) {
         `Cannot connect to ${host}:${port} (check port forward / firewall / device online)`,
       );
     }
+    const connType =
+      typeof client.getConnectionType === 'function'
+        ? client.getConnectionType()
+        : 'unknown';
+    console.log(`[zk-ip] connected ${host}:${port} via ${connType}`);
+
     let result;
     try {
       result = await client.getAttendances();
     } catch (e) {
       throw asError(e, `Connected but failed to read attendance from ${host}:${port}`);
+    }
+    // Some SDK versions return { data, err } without throwing
+    if (result && result.err) {
+      throw asError(result.err, `Read attendance returned error from ${host}:${port}`);
     }
     const rows = Array.isArray(result)
       ? result
@@ -125,7 +141,11 @@ async function fetchAttendanceLogs({ host, port = 4370, timeoutMs = 10000 }) {
  */
 async function clearAttendanceLogOnDevice({ host, port = 4370, timeoutMs = 10000 }) {
   if (!host) throw new Error('host is required');
-  const client = new ZKAttendanceClient(host, Number(port) || 4370, timeoutMs, 5200);
+  const client = new ZKAttendanceClient(
+    host,
+    Number(port) || 4370,
+    Number(timeoutMs) || 10000,
+  );
   try {
     await client.createSocket();
     if (typeof client.clearAttendanceLog !== 'function') {
