@@ -48,6 +48,8 @@ function bodyToString(raw) {
   return String(raw);
 }
 
+const { parseDeviceWallTime } = require('./punchTime');
+
 function parseAttlogLine(line) {
   const trimmed = String(line || '').trim();
   if (!trimmed || trimmed.startsWith('#')) return null;
@@ -56,8 +58,9 @@ function parseAttlogLine(line) {
   const pin = parts[0]?.trim();
   const timeStr = parts[1]?.trim();
   if (!pin || !timeStr) return null;
-  const punchTime = new Date(timeStr.replace(' ', 'T'));
-  if (Number.isNaN(punchTime.getTime())) return null;
+  // Device time is wall-clock (Egypt), not UTC — see punchTime.js
+  const punchTime = parseDeviceWallTime(timeStr);
+  if (!punchTime) return null;
   const externalPunchId = `${pin}:${timeStr}:${parts[2] || '0'}`;
   return { pin, punchTime, externalPunchId, rawLine: trimmed };
 }

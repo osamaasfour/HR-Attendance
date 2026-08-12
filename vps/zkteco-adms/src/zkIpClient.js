@@ -9,6 +9,8 @@
 
 'use strict';
 
+const { coerceDevicePunchTime, getPunchTimezone } = require('./punchTime');
+
 let ZKTecoClientPromise = null;
 
 function loadZKTecoClient() {
@@ -80,20 +82,14 @@ function normalizeAttendanceLog(entry) {
       '',
   ).trim();
 
-  let punchTime = null;
   const rawTime =
     entry.recordTime ?? entry.timestamp ?? entry.attTime ?? entry.time ?? null;
-  if (rawTime instanceof Date) {
-    punchTime = rawTime;
-  } else if (typeof rawTime === 'number') {
-    punchTime = new Date(rawTime > 1e12 ? rawTime : rawTime * 1000);
-  } else if (typeof rawTime === 'string' && rawTime.trim()) {
-    punchTime = new Date(rawTime.replace(' ', 'T'));
-  }
+  const punchTime = coerceDevicePunchTime(rawTime);
 
-  if (!pin || !punchTime || Number.isNaN(punchTime.getTime())) return null;
+  if (!pin || !punchTime) return null;
 
-  const timeStr = punchTime.toISOString();
+  // Stable id from device wall clock in company timezone
+  const timeStr = punchTime.toLocaleString('sv-SE', { timeZone: getPunchTimezone() });
   const status = entry.punch ?? entry.status ?? entry.type ?? entry.state ?? '0';
   const externalPunchId = `${pin}:${timeStr}:${status}`;
   const rawLine = JSON.stringify({

@@ -46,7 +46,15 @@ const DEFAULT_IP_PORT = 4370;
 function formatTs(ts?: { toDate?: () => Date } | null): string {
   if (!ts?.toDate) return '—';
   try {
-    return ts.toDate().toLocaleString();
+    return ts.toDate().toLocaleString('en-GB', {
+      timeZone: 'Africa/Cairo',
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    });
   } catch {
     return '—';
   }

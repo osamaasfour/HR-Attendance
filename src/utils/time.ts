@@ -5,15 +5,22 @@
 import { WORK_START, WORK_END, LATE_GRACE_MINUTES } from '../constants/theme';
 import type { AttendanceStatus } from '../types';
 
+/** Company / device wall-clock zone (matches PUNCH_TIMEZONE on the VPS). */
+export const DEFAULT_DISPLAY_TIMEZONE = 'Africa/Cairo';
+
 /**
- * Formats a Date or ISO string to a readable time string.
+ * Formats a Date or ISO string to a readable time string in the company timezone.
  */
-export function formatTime(date: Date | string): string {
+export function formatTime(
+  date: Date | string,
+  timeZone: string = DEFAULT_DISPLAY_TIMEZONE,
+): string {
   const d = typeof date === 'string' ? new Date(date) : date;
   return d.toLocaleTimeString('en-US', {
     hour: '2-digit',
     minute: '2-digit',
     hour12: true,
+    timeZone,
   });
 }
 
@@ -21,25 +28,36 @@ export function formatTime(date: Date | string): string {
  * Formats a Date or ISO string to a readable date string.
  * @example formatDate(new Date()) => "Mon, Jan 15, 2025"
  */
-export function formatDate(date: Date | string): string {
+export function formatDate(
+  date: Date | string,
+  timeZone: string = DEFAULT_DISPLAY_TIMEZONE,
+): string {
   const d = typeof date === 'string' ? new Date(date) : date;
   return d.toLocaleDateString('en-US', {
     weekday: 'short',
     month: 'short',
     day: 'numeric',
     year: 'numeric',
+    timeZone,
   });
 }
 
 /**
- * Formats a Date to "YYYY-MM-DD" for Firestore querying.
+ * Formats a Date to "YYYY-MM-DD" for Firestore querying (company timezone).
  * @example toDateString(new Date()) => "2025-01-15"
  */
-export function toDateString(date: Date = new Date()): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+export function toDateString(
+  date: Date = new Date(),
+  timeZone: string = DEFAULT_DISPLAY_TIMEZONE,
+): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value || '00';
+  return `${get('year')}-${get('month')}-${get('day')}`;
 }
 
 /**
@@ -47,27 +65,14 @@ export function toDateString(date: Date = new Date()): string {
  */
 export function getFriendlyDateLabel(date: Date | string): string {
   const d = typeof date === 'string' ? new Date(date) : date;
-  const today = new Date();
+  const todayKey = toDateString(new Date());
+  const dateKey = toDateString(d);
 
-  // Check "Today"
-  if (
-    d.getDate() === today.getDate() &&
-    d.getMonth() === today.getMonth() &&
-    d.getFullYear() === today.getFullYear()
-  ) {
-    return 'Today';
-  }
+  if (dateKey === todayKey) return 'Today';
 
-  // Check "Yesterday"
-  const yesterday = new Date(today);
+  const yesterday = new Date();
   yesterday.setDate(yesterday.getDate() - 1);
-  if (
-    d.getDate() === yesterday.getDate() &&
-    d.getMonth() === yesterday.getMonth() &&
-    d.getFullYear() === yesterday.getFullYear()
-  ) {
-    return 'Yesterday';
-  }
+  if (dateKey === toDateString(yesterday)) return 'Yesterday';
 
   return formatDate(d);
 }
@@ -141,8 +146,19 @@ export function parseHmToMinutes(hm: string): number {
   return (h || 0) * 60 + (m || 0);
 }
 
-export function minutesOfDay(date: Date): number {
-  return date.getHours() * 60 + date.getMinutes();
+export function minutesOfDay(
+  date: Date,
+  timeZone: string = DEFAULT_DISPLAY_TIMEZONE,
+): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(date);
+  const hour = Number(parts.find((p) => p.type === 'hour')?.value || 0);
+  const minute = Number(parts.find((p) => p.type === 'minute')?.value || 0);
+  return hour * 60 + minute;
 }
 
 /** Minutes late vs WORK_START after grace */

@@ -1,6 +1,13 @@
 /**
  * Attendance time math (mirrors src/utils/time.ts for Cloud Functions).
+ * Uses company punch timezone (default Africa/Cairo).
  */
+
+const {
+  getPunchTimezone,
+  toDateStringInZone,
+  minutesOfDayInZone,
+} = require('./punchTime');
 
 const DEFAULT_SCHEDULE = {
   workStart: '09:00',
@@ -9,11 +16,8 @@ const DEFAULT_SCHEDULE = {
   lateGraceMinutes: 10,
 };
 
-function toDateString(date = new Date()) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+function toDateString(date = new Date(), timeZone = getPunchTimezone()) {
+  return toDateStringInZone(date, timeZone);
 }
 
 function parseHmToMinutes(hm) {
@@ -21,20 +25,20 @@ function parseHmToMinutes(hm) {
   return (h || 0) * 60 + (m || 0);
 }
 
-function minutesOfDay(date) {
-  return date.getHours() * 60 + date.getMinutes();
+function minutesOfDay(date, timeZone = getPunchTimezone()) {
+  return minutesOfDayInZone(date, timeZone);
 }
 
-function computeLateMinutes(clockIn, workStart, grace) {
+function computeLateMinutes(clockIn, workStart, grace, timeZone = getPunchTimezone()) {
   const start = parseHmToMinutes(workStart || DEFAULT_SCHEDULE.workStart);
-  const actual = minutesOfDay(clockIn);
+  const actual = minutesOfDay(clockIn, timeZone);
   const raw = Math.max(0, actual - start);
   return Math.max(0, raw - (grace ?? DEFAULT_SCHEDULE.lateGraceMinutes));
 }
 
-function computeEarlyLeaveMinutes(clockOut, workEnd) {
+function computeEarlyLeaveMinutes(clockOut, workEnd, timeZone = getPunchTimezone()) {
   const end = parseHmToMinutes(workEnd || DEFAULT_SCHEDULE.workEnd);
-  const actual = minutesOfDay(clockOut);
+  const actual = minutesOfDay(clockOut, timeZone);
   return Math.max(0, end - actual);
 }
 

@@ -72,13 +72,17 @@ curl http://localhost:3001/health
 # or: curl https://hr.ecfshipment.com/health
 ```
 
-### Env (IP poller)
+### Env (IP poller + timezone)
 
 ```
 IP_POLL_INTERVAL_MS=60000
 IP_POLL_TIMEOUT_MS=10000
+PUNCH_TIMEZONE=Africa/Cairo
 ```
 
+Fingerprint terminals store **local wall-clock** time (no timezone). The service
+converts those times using `PUNCH_TIMEZONE` so the app shows the same clock the
+machine displayed. Keep this aligned with the timezone set on each terminal.
 ---
 
 ## Updates (after code changes)

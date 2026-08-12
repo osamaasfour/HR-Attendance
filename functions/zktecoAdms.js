@@ -6,6 +6,7 @@
 const { onRequest } = require('firebase-functions/v2/https');
 const { getFirestore, Timestamp } = require('firebase-admin/firestore');
 const { processFingerprintPunch } = require('./punchProcessor');
+const { parseDeviceWallTime } = require('./punchTime');
 
 function parseAttlogLine(line) {
   const trimmed = String(line || '').trim();
@@ -18,8 +19,9 @@ function parseAttlogLine(line) {
   const timeStr = parts[1]?.trim();
   if (!pin || !timeStr) return null;
 
-  const punchTime = new Date(timeStr.replace(' ', 'T'));
-  if (Number.isNaN(punchTime.getTime())) return null;
+  // Device time is wall-clock (Egypt), not UTC
+  const punchTime = parseDeviceWallTime(timeStr);
+  if (!punchTime) return null;
 
   const externalPunchId = `${pin}:${timeStr}:${parts[2] || '0'}`;
   return { pin, punchTime, externalPunchId, rawLine: trimmed };
