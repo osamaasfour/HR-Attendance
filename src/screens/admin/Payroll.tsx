@@ -56,7 +56,16 @@ import type {
 import { resolveWorkSchedule, workShiftToSchedule } from '../../types';
 import type { TranslationKey } from '../../i18n/translations';
 import { toCsv, downloadCsv } from '../../utils/csv';
+import { exportESalaryXlsx } from '../../utils/eSalaryExport';
+import {
+  bankTransferCsvHeaders,
+  bankTransferRowValues,
+  hasBankAccount,
+  mapPayslipToBankTransferRow,
+} from '../../utils/bankTransferMap';
 import { payrollSettingsDocId } from '../../utils/sendEmail';
+import { fetchHolidays, holidayDateSet } from '../../utils/holidays';
+import { colors } from '../../constants/colors';
 
 function currentPeriod(): string {
   const d = new Date();
@@ -111,10 +120,6 @@ export default function AdminPayrollScreen() {
   const [allowMeal, setAllowMeal] = useState('');
   const [allowNature, setAllowNature] = useState('');
   const [allowOther, setAllowOther] = useState('');
-  const [bankName, setBankName] = useState('');
-  const [accountHolder, setAccountHolder] = useState('');
-  const [accountNumber, setAccountNumber] = useState('');
-  const [iban, setIban] = useState('');
   const [salaryPanelOpen, setSalaryPanelOpen] = useState(false);
   const [salarySearch, setSalarySearch] = useState('');
   const [filterMissingSalary, setFilterMissingSalary] = useState(false);
@@ -147,6 +152,14 @@ export default function AdminPayrollScreen() {
       missing,
     };
   }, [users, compensations]);
+
+  const missingBankOnPayslips = useMemo(
+    () =>
+      payslips.filter(
+        (p) => !hasBankAccount(users.find((u) => u.uid === p.userId), compensations[p.userId]),
+      ).length,
+    [payslips, users, compensations],
+  );
 
   const rosterUsers = useMemo(() => {
     const q = salarySearch.trim().toLowerCase();
@@ -255,10 +268,6 @@ export default function AdminPayrollScreen() {
     setAllowMeal(a?.meal ? String(a.meal) : '');
     setAllowNature(a?.natureOfWork ? String(a.natureOfWork) : '');
     setAllowOther(a?.other ? String(a.other) : '');
-    setBankName(existing?.bankName || '');
-    setAccountHolder(existing?.accountHolder || '');
-    setAccountNumber(existing?.accountNumber || '');
-    setIban(existing?.iban || '');
     setSalaryPanelOpen(true);
   };
 
@@ -316,14 +325,11 @@ export default function AdminPayrollScreen() {
       tenantId,
       updatedAt: Timestamp.now(),
     };
-    const bn = bankName.trim();
-    const ah = accountHolder.trim();
-    const an = accountNumber.trim();
-    const ib = iban.trim();
-    if (bn) payload.bankName = bn;
-    if (ah) payload.accountHolder = ah;
-    if (an) payload.accountNumber = an;
-    if (ib) payload.iban = ib;
+    const existing = compensations[salaryUserId];
+    if (existing?.bankName) payload.bankName = existing.bankName;
+    if (existing?.accountHolder) payload.accountHolder = existing.accountHolder;
+    if (existing?.accountNumber) payload.accountNumber = existing.accountNumber;
+    if (existing?.iban) payload.iban = existing.iban;
     await setDoc(doc(db, 'compensation', salaryUserId), payload);
     setCompensations((prev) => ({ ...prev, [salaryUserId]: payload }));
     setSalaryPanelOpen(false);
@@ -331,36 +337,53 @@ export default function AdminPayrollScreen() {
   };
 
   const exportBankTransferCsv = async () => {
+    if (payslips.length === 0) {
+      showAlert(t('warning'), t('eSalaryExportEmpty'));
+      return;
+    }
     try {
-      const rows = payslips.map((p) => {
-        const comp = compensations[p.userId];
-        const emp = users.find((e) => e.uid === p.userId);
-        return [
-          emp?.employeeId || '',
-          p.userName || emp?.fullName || '',
-          comp?.bankName || '',
-          comp?.accountHolder || '',
-          comp?.accountNumber || '',
-          comp?.iban || '',
-          Number(p.netPay ?? 0).toFixed(2),
-          period,
-        ];
-      });
-      const csv = toCsv(
-        [
-          'employeeId',
-          'fullName',
-          'bankName',
-          'accountHolder',
-          'accountNumber',
-          'iban',
-          'netPay',
-          'period',
-        ],
-        rows,
+      const missing = payslips.filter(
+        (p) => !hasBankAccount(users.find((e) => e.uid === p.userId), compensations[p.userId]),
+      ).length;
+      const rows = payslips.map((p, idx) =>
+        bankTransferRowValues(
+          mapPayslipToBankTransferRow({
+            serial: idx + 1,
+            user: users.find((e) => e.uid === p.userId),
+            compensation: compensations[p.userId],
+            payslip: p,
+            tenant,
+            period,
+          }),
+        ),
       );
+      const csv = toCsv(bankTransferCsvHeaders(), rows);
       await downloadCsv(`bank-transfer-${period}.csv`, csv);
-      showAlert(t('success'), t('bankExportDone', { count: rows.length, period }));
+      const done = t('bankExportDone', { count: rows.length, period });
+      showAlert(
+        t('success'),
+        missing > 0 ? `${done}\n${t('bankExportMissingAccounts', { count: missing })}` : done,
+      );
+    } catch (e: any) {
+      showAlert(t('error'), e?.message || t('actionFailed'));
+    }
+  };
+
+  const exportESalary = async () => {
+    if (payslips.length === 0) {
+      showAlert(t('warning'), t('eSalaryExportEmpty'));
+      return;
+    }
+    try {
+      const count = await exportESalaryXlsx({
+        period,
+        payslips,
+        users,
+        compensations,
+        tenant,
+        settings,
+      });
+      showAlert(t('success'), t('eSalaryExportDone', { count, period }));
     } catch (e: any) {
       showAlert(t('error'), e?.message || t('actionFailed'));
     }
@@ -416,6 +439,8 @@ export default function AdminPayrollScreen() {
           .map((s) => [s.id, s]),
       );
       const defaultOffDays = resolveWorkSchedule(tenant.workSchedule).weeklyOffDays;
+      const holidayList = await fetchHolidays(tid);
+      const holidayDates = holidayDateSet(holidayList, start, end);
 
       const missingSalary = users.filter(
         (u) => !comps.get(u.uid)?.basicSalary || (comps.get(u.uid)?.basicSalary || 0) <= 0,
@@ -456,6 +481,7 @@ export default function AdminPayrollScreen() {
           requests: allReq.filter((r) => r.userId === u.uid),
           loans: allLoans.filter((l) => l.userId === u.uid && l.active),
           weeklyOffDays,
+          holidayDates,
         });
 
         const existingForUser = existing.docs.find((d) => d.data().userId === u.uid);
@@ -639,7 +665,18 @@ export default function AdminPayrollScreen() {
             >
               <Text className="text-white font-semibold">{t('exportBankTransferCsv')}</Text>
             </TouchableOpacity>
+            <TouchableOpacity
+              onPress={exportESalary}
+              className="mt-2 bg-primary-600 rounded-xl h-11 items-center justify-center"
+            >
+              <Text className="text-white font-semibold">{t('exportESalary')}</Text>
+            </TouchableOpacity>
             <Text className="text-[10px] text-surface-400 mt-2">{t('exportBankTransferHint')}</Text>
+            {payslips.length > 0 && missingBankOnPayslips > 0 ? (
+              <Text className="text-[10px] text-warning-600 mt-1">
+                {t('bankExportMissingAccounts', { count: missingBankOnPayslips })}
+              </Text>
+            ) : null}
           </View>
 
           <View className="mx-4 mb-4">
@@ -820,7 +857,7 @@ export default function AdminPayrollScreen() {
                     }))
                   }
                   trackColor={{ false: '#E2E8F0', true: '#93C5FD' }}
-                  thumbColor={settings[occKey].enabled ? '#1E3A5F' : '#F8FAFC'}
+                  thumbColor={settings[occKey].enabled ? colors.primary : colors.switchTrack}
                 />
               </View>
               <NumField
@@ -1115,7 +1152,7 @@ export default function AdminPayrollScreen() {
                 value={filterMissingSalary}
                 onValueChange={setFilterMissingSalary}
                 trackColor={{ false: '#E2E8F0', true: '#93C5FD' }}
-                thumbColor={filterMissingSalary ? '#1E3A5F' : '#f4f3f4'}
+                thumbColor={filterMissingSalary ? colors.primary : colors.switchTrackAlt}
               />
             </View>
 
@@ -1382,41 +1419,6 @@ export default function AdminPayrollScreen() {
                       currency,
                     })}
                   </Text>
-
-                  <Text className="text-sm font-semibold text-surface-800 mb-1">
-                    {t('bankDetailsTitle')}
-                  </Text>
-                  <Text className="text-xs text-surface-400 mb-2">{t('bankDetailsHint')}</Text>
-                  <Text className="text-xs text-surface-400 mb-1">{t('bankName')}</Text>
-                  <TextInput
-                    className="border border-surface-200 rounded-xl px-3 h-11 mb-2 bg-white"
-                    value={bankName}
-                    onChangeText={setBankName}
-                    placeholder={t('bankName')}
-                  />
-                  <Text className="text-xs text-surface-400 mb-1">{t('accountHolder')}</Text>
-                  <TextInput
-                    className="border border-surface-200 rounded-xl px-3 h-11 mb-2 bg-white"
-                    value={accountHolder}
-                    onChangeText={setAccountHolder}
-                    placeholder={t('accountHolder')}
-                  />
-                  <Text className="text-xs text-surface-400 mb-1">{t('accountNumber')}</Text>
-                  <TextInput
-                    className="border border-surface-200 rounded-xl px-3 h-11 mb-2 bg-white"
-                    value={accountNumber}
-                    onChangeText={setAccountNumber}
-                    placeholder={t('accountNumber')}
-                    autoCapitalize="none"
-                  />
-                  <Text className="text-xs text-surface-400 mb-1">{t('ibanOptional')}</Text>
-                  <TextInput
-                    className="border border-surface-200 rounded-xl px-3 h-11 mb-3 bg-white"
-                    value={iban}
-                    onChangeText={setIban}
-                    placeholder={t('ibanOptional')}
-                    autoCapitalize="characters"
-                  />
 
                   <View className="bg-surface-50 rounded-xl p-3 mb-4">
                     <Text className="text-xs font-semibold text-surface-500 mb-1">

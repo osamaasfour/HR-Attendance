@@ -32,6 +32,8 @@ import {
 import { useAuth } from '../../context/AuthContext';
 import { useAppAlert } from '../../context/AlertContext';
 import { useLanguage } from '../../context/LanguageContext';
+import { useCompany } from '../../context/CompanyContext';
+import { DEFAULT_PUNCH_TIMEZONE } from '../../constants/timezones';
 import { ZKTECO_ADMS_URL, generateDeviceSecret } from '../../constants/zkteco';
 import type {
   FingerprintConnectionType,
@@ -40,14 +42,18 @@ import type {
   UserData,
   WorkLocation,
 } from '../../types';
+import { colors } from '../../constants/colors';
 
 const DEFAULT_IP_PORT = 4370;
 
-function formatTs(ts?: { toDate?: () => Date } | null): string {
+function formatTs(
+  ts?: { toDate?: () => Date } | null,
+  timeZone: string = DEFAULT_PUNCH_TIMEZONE,
+): string {
   if (!ts?.toDate) return '—';
   try {
     return ts.toDate().toLocaleString('en-GB', {
-      timeZone: 'Africa/Cairo',
+      timeZone,
       day: '2-digit',
       month: 'short',
       year: 'numeric',
@@ -68,7 +74,9 @@ export default function FingerprintDevicesScreen() {
   const { user } = useAuth();
   const { showAlert } = useAppAlert();
   const { t } = useLanguage();
+  const { company } = useCompany();
   const tenantId = user?.tenantId || 'default';
+  const defaultTimezone = company.timezone || DEFAULT_PUNCH_TIMEZONE;
 
   const [devices, setDevices] = useState<FingerprintDevice[]>([]);
   const [locations, setLocations] = useState<WorkLocation[]>([]);
@@ -89,6 +97,12 @@ export default function FingerprintDevicesScreen() {
   const [port, setPort] = useState(String(DEFAULT_IP_PORT));
   const [clearDeviceLogAfterSync, setClearDeviceLogAfterSync] = useState(false);
   const [active, setActive] = useState(true);
+
+  const locationTimezone = useCallback(
+    (workLocationId?: string) =>
+      locations.find((l) => l.id === workLocationId)?.timezone || defaultTimezone,
+    [locations, defaultTimezone],
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -589,15 +603,15 @@ export default function FingerprintDevicesScreen() {
                     {t('assignedWorkLocation')}: {dev.workLocationName || dev.workLocationId}
                   </Text>
                   <Text className="text-surface-400 text-[11px] mt-1">
-                    {t('lastSeen')}: {formatTs(dev.lastSeenAt)}
+                    {t('lastSeen')}: {formatTs(dev.lastSeenAt, locationTimezone(dev.workLocationId))}
                   </Text>
                   <Text className="text-surface-400 text-[11px]">
-                    {t('lastPunch')}: {formatTs(dev.lastPunchAt)}
+                    {t('lastPunch')}: {formatTs(dev.lastPunchAt, locationTimezone(dev.workLocationId))}
                   </Text>
                   {ctype === 'ip' && (
                     <>
                       <Text className="text-surface-400 text-[11px]">
-                        {t('lastPoll')}: {formatTs(dev.lastPollAt)}
+                        {t('lastPoll')}: {formatTs(dev.lastPollAt, locationTimezone(dev.workLocationId))}
                       </Text>
                       {!!dev.lastPollError && (
                         <Text className="text-danger-600 text-[11px] mt-0.5">
@@ -665,7 +679,7 @@ export default function FingerprintDevicesScreen() {
 
       <View className="mx-4 mt-4 bg-white rounded-2xl p-4 border border-surface-100">
         <View className="flex-row items-center mb-2">
-          <MaterialCommunityIcons name="account-key" size={20} color="#1E3A5F" />
+          <MaterialCommunityIcons name="account-key" size={20} color={colors.primary} />
           <Text className="text-base font-semibold text-surface-800 ml-2">
             {t('fingerprintEnrollmentTitle')}
           </Text>

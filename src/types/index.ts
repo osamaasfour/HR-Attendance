@@ -74,6 +74,10 @@ export interface Tenant {
   timezone?: string;
   /** Working days & hours for attendance / absences */
   workSchedule?: WorkSchedule;
+  /** ETA e-Salary EI065 — original employer tax registration */
+  taxRegistrationNumber?: string;
+  /** Company social-insurance registration (records; employee SI number is on UserData) */
+  socialInsuranceNumber?: string;
   plan?: 'free' | 'pro' | 'enterprise';
   /** Soft-delete / suspend — blocks all logins for this tenant */
   active?: boolean;
@@ -110,6 +114,11 @@ export const DEFAULT_TENANT: Tenant = {
   active: true,
 };
 
+export type Nationality = 'egyptian' | 'other';
+export type TaxTreatment = 'original' | 'form2' | 'form3' | 'other';
+export type InsuranceStatus = 'insured' | 'not_insured' | 'ended';
+export type UhiStatus = 'enrolled' | 'not_enrolled';
+
 export interface UserData {
   uid: string;
   email: string;
@@ -141,6 +150,33 @@ export interface UserData {
   jobTitle?: string;
   phone?: string;
   photoURL?: string;
+  /** e-Salary statutory identity */
+  nationality?: Nationality;
+  nationalId?: string;
+  passportNumber?: string;
+  passportNumberNew?: string;
+  workPermitStatus?: string;
+  workPermitNumber?: string;
+  taxTreatment?: TaxTreatment;
+  insuranceStatus?: InsuranceStatus;
+  insuranceNumber?: string;
+  /** YYYY-MM-DD */
+  insuranceJoinDate?: string;
+  priorPeriodInstallment?: number;
+  /** YYYY-MM-DD */
+  serviceEndDate?: string;
+  /** YYYY-MM-DD */
+  insuranceUnsubscribeDate?: string;
+  uhiStatus?: UhiStatus;
+  uhiNonWorkingSpouses?: number;
+  uhiDependents?: number;
+  /** YYYY-MM-DD — used for e-Salary work duration (EI130) */
+  hireDate?: string;
+  /** Bank transfer details (Users page; used by payroll bank export) */
+  bankName?: string;
+  accountHolder?: string;
+  accountNumber?: string;
+  iban?: string;
   active?: boolean;
   /** Platform owner — can manage all tenants / licenses (vendor console) */
   platformAdmin?: boolean;
@@ -271,6 +307,8 @@ export interface WorkLocation {
   longitude: number;
   /** Geofence radius in meters */
   radiusMeters: number;
+  /** IANA timezone for fingerprint punches at this site (e.g. Africa/Cairo) */
+  timezone?: string;
   tenantId: string;
   active?: boolean;
   createdAt?: Timestamp;
@@ -352,6 +390,24 @@ export interface WorkShift {
   updatedAt?: Timestamp;
 }
 
+/** Company public / official holiday — not counted as absence */
+export interface Holiday {
+  id: string;
+  tenantId: string;
+  name: string;
+  /** YYYY-MM-DD inclusive start (preferred) */
+  startDate?: string;
+  /** YYYY-MM-DD inclusive end (preferred) */
+  endDate?: string;
+  /** @deprecated Legacy single-day field; treated as start=end */
+  date?: string;
+  /** Repeat every year on the same month-day span */
+  recurring?: boolean;
+  createdAt?: Timestamp;
+  updatedAt?: Timestamp;
+  createdBy?: string;
+}
+
 export function workShiftToSchedule(shift: Pick<
   WorkShift,
   'workStart' | 'workEnd' | 'fullDayHours' | 'lateGraceMinutes' | 'weeklyOffDays'
@@ -401,6 +457,8 @@ export interface AttendanceRecord {
   clockOutDeviceId?: string | null;
   /** Machine log id for deduplication */
   externalPunchId?: string | null;
+  /** IANA timezone used when the punch was recorded (for display / late math) */
+  punchTimezone?: string | null;
   createdAt?: Timestamp;
 }
 

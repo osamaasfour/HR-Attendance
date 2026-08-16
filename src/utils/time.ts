@@ -3,10 +3,19 @@
  */
 
 import { WORK_START, WORK_END, LATE_GRACE_MINUTES } from '../constants/theme';
+import { DEFAULT_PUNCH_TIMEZONE } from '../constants/timezones';
 import type { AttendanceStatus } from '../types';
 
-/** Company / device wall-clock zone (matches PUNCH_TIMEZONE on the VPS). */
-export const DEFAULT_DISPLAY_TIMEZONE = 'Africa/Cairo';
+/** Company / device wall-clock zone fallback. */
+export const DEFAULT_DISPLAY_TIMEZONE = DEFAULT_PUNCH_TIMEZONE;
+
+/** Timezone for displaying a punch (record override → company default). */
+export function resolveAttendanceTimezone(
+  record?: { punchTimezone?: string | null } | null,
+  companyTimezone?: string | null,
+): string {
+  return record?.punchTimezone || companyTimezone || DEFAULT_DISPLAY_TIMEZONE;
+}
 
 /**
  * Formats a Date or ISO string to a readable time string in the company timezone.
@@ -132,12 +141,15 @@ export function calculateAttendanceStatus(
   return 'half-day';
 }
 
-/** True if the date is a company working day (not in weeklyOffDays). */
+/** True if the date is a company working day (not weekly off and not a holiday). */
 export function isWorkingDay(
   date: Date,
   weeklyOffDays: number[] = [0, 6],
+  holidayDates?: Set<string>,
 ): boolean {
-  return !weeklyOffDays.includes(date.getDay());
+  if (weeklyOffDays.includes(date.getDay())) return false;
+  if (holidayDates?.has(toDateString(date))) return false;
+  return true;
 }
 
 /** Parse "HH:mm" into minutes from midnight */
@@ -166,17 +178,22 @@ export function computeLateMinutes(
   clockIn: Date,
   workStart = WORK_START,
   grace = LATE_GRACE_MINUTES,
+  timeZone: string = DEFAULT_DISPLAY_TIMEZONE,
 ): number {
   const start = parseHmToMinutes(workStart);
-  const actual = minutesOfDay(clockIn);
+  const actual = minutesOfDay(clockIn, timeZone);
   const raw = Math.max(0, actual - start);
   return Math.max(0, raw - grace);
 }
 
 /** Minutes early vs WORK_END */
-export function computeEarlyLeaveMinutes(clockOut: Date, workEnd = WORK_END): number {
+export function computeEarlyLeaveMinutes(
+  clockOut: Date,
+  workEnd = WORK_END,
+  timeZone: string = DEFAULT_DISPLAY_TIMEZONE,
+): number {
   const end = parseHmToMinutes(workEnd);
-  const actual = minutesOfDay(clockOut);
+  const actual = minutesOfDay(clockOut, timeZone);
   return Math.max(0, end - actual);
 }
 

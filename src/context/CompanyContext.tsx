@@ -100,6 +100,16 @@ export function CompanyProvider({ children }: { children: React.ReactNode }) {
       else if (tenant.logoUrl !== undefined) payload.logoUrl = tenant.logoUrl;
       if (patch.workSchedule !== undefined) payload.workSchedule = patch.workSchedule;
       else if (tenant.workSchedule !== undefined) payload.workSchedule = tenant.workSchedule;
+      if (patch.taxRegistrationNumber !== undefined) {
+        payload.taxRegistrationNumber = patch.taxRegistrationNumber;
+      } else if (tenant.taxRegistrationNumber !== undefined) {
+        payload.taxRegistrationNumber = tenant.taxRegistrationNumber;
+      }
+      if (patch.socialInsuranceNumber !== undefined) {
+        payload.socialInsuranceNumber = patch.socialInsuranceNumber;
+      } else if (tenant.socialInsuranceNumber !== undefined) {
+        payload.socialInsuranceNumber = tenant.socialInsuranceNumber;
+      }
 
       await updateTenant(tid, payload);
       const next = await getTenantById(tid);

@@ -18,6 +18,7 @@ import {
   Pressable,
   StyleSheet,
 } from 'react-native';
+import { colors } from '../constants/colors';
 
 export type AlertButton = {
   text: string;
@@ -160,7 +161,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 10,
-    backgroundColor: '#1E3A5F',
+    backgroundColor: colors.primary,
   },
   buttonCancel: {
     backgroundColor: '#F1F5F9',

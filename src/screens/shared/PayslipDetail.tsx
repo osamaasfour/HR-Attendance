@@ -6,6 +6,7 @@ import React from 'react';
 import { View, Text, TouchableOpacity, Platform, ScrollView, StyleSheet } from 'react-native';
 import { useLanguage } from '../../context/LanguageContext';
 import type { Payslip } from '../../types';
+import { colors } from '../../constants/colors';
 
 function TableHeader() {
   const { t } = useLanguage();
@@ -29,7 +30,7 @@ function TableRow({
   bold?: boolean;
 }) {
   const amountColor =
-    tone === 'deduction' ? '#EF4444' : tone === 'net' ? '#1E3A5F' : '#1E293B';
+    tone === 'deduction' ? colors.danger : tone === 'net' ? colors.primary : colors.surface800;
   return (
     <View style={[styles.row, tone === 'net' && styles.netRow, tone === 'total' && styles.totalRow]}>
       <Text style={[styles.cellDesc, bold && styles.bold, tone === 'net' && styles.netText]}>
@@ -212,7 +213,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#F1F5F9',
   },
   sectionBanner: {
-    backgroundColor: '#EBF2FA',
+    backgroundColor: colors.primary50,
     paddingVertical: 8,
     paddingHorizontal: 12,
     borderBottomWidth: 1,
@@ -221,7 +222,7 @@ const styles = StyleSheet.create({
   sectionText: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#1E3A5F',
+    color: colors.primary,
     textTransform: 'uppercase',
     letterSpacing: 0.4,
   },
@@ -251,11 +252,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#F8FAFC',
   },
   netRow: {
-    backgroundColor: '#EBF2FA',
+    backgroundColor: colors.primary50,
     borderBottomWidth: 0,
   },
   netText: {
-    color: '#1E3A5F',
+    color: colors.primary,
     fontSize: 16,
   },
 });

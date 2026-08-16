@@ -13,6 +13,7 @@ import {
 } from '../services/firebase';
 import { useAuth } from '../context/AuthContext';
 import { toDateString } from '../utils/time';
+import { lastNDateKeys } from '../utils/reportAnalytics';
 import type { EmployeeStatus, DailyStats, AttendanceRecord, UserData } from '../types';
 
 export function useAdminData(selectedDate?: string) {
@@ -27,6 +28,7 @@ export function useAdminData(selectedDate?: string) {
     halfDayCount: 0,
   });
   const [todayRecords, setTodayRecords] = useState<AttendanceRecord[]>([]);
+  const [weekRecords, setWeekRecords] = useState<AttendanceRecord[]>([]);
   const [allUsers, setAllUsers] = useState<UserData[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -78,6 +80,23 @@ export function useAdminData(selectedDate?: string) {
     return users;
   }, [tenantId]);
 
+  const fetchWeekRecords = useCallback(async () => {
+    const start = lastNDateKeys(7)[0];
+    const weekQuery = query(
+      collection(db, 'attendance'),
+      where('date', '>=', start),
+      where('date', '<=', dateKey),
+    );
+    const snap = await getDocs(weekQuery);
+    const records = snap.docs
+      .map((docSnap) => ({
+        ...(docSnap.data() as AttendanceRecord),
+        id: docSnap.id,
+      }))
+      .filter((a) => (a.tenantId || 'default') === tenantId || !a.tenantId);
+    setWeekRecords(records);
+  }, [dateKey, tenantId]);
+
   const refresh = useCallback(async () => {
     setIsRefreshing(true);
     try {
@@ -92,13 +111,14 @@ export function useAdminData(selectedDate?: string) {
         id: docSnap.id,
       }));
       mergeData(users, records);
+      await fetchWeekRecords();
     } catch (error) {
       console.error('[Admin] Failed to fetch data:', error);
     } finally {
       setIsRefreshing(false);
       setIsLoading(false);
     }
-  }, [dateKey, fetchUsers, mergeData]);
+  }, [dateKey, fetchUsers, mergeData, fetchWeekRecords]);
 
   useEffect(() => {
     let unsub = () => {};
@@ -121,6 +141,7 @@ export function useAdminData(selectedDate?: string) {
             }));
             mergeData(users, records);
             setIsLoading(false);
+            fetchWeekRecords().catch(() => {});
           },
           (error) => {
             console.error('[Admin] Snapshot error:', error);
@@ -137,12 +158,13 @@ export function useAdminData(selectedDate?: string) {
       cancelled = true;
       unsub();
     };
-  }, [dateKey, fetchUsers, mergeData]);
+  }, [dateKey, fetchUsers, mergeData, fetchWeekRecords]);
 
   return {
     employees,
     stats,
     todayRecords,
+    weekRecords,
     allUsers,
     isLoading,
     isRefreshing,

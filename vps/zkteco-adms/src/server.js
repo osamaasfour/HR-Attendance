@@ -49,8 +49,9 @@ function bodyToString(raw) {
 }
 
 const { parseDeviceWallTime } = require('./punchTime');
+const { resolveDeviceTimezone } = require('./deviceTimezone');
 
-function parseAttlogLine(line) {
+function parseAttlogLine(line, timeZone) {
   const trimmed = String(line || '').trim();
   if (!trimmed || trimmed.startsWith('#')) return null;
   const parts = trimmed.split(/\t/);
@@ -58,8 +59,7 @@ function parseAttlogLine(line) {
   const pin = parts[0]?.trim();
   const timeStr = parts[1]?.trim();
   if (!pin || !timeStr) return null;
-  // Device time is wall-clock (Egypt), not UTC — see punchTime.js
-  const punchTime = parseDeviceWallTime(timeStr);
+  const punchTime = parseDeviceWallTime(timeStr, timeZone);
   if (!punchTime) return null;
   const externalPunchId = `${pin}:${timeStr}:${parts[2] || '0'}`;
   return { pin, punchTime, externalPunchId, rawLine: trimmed };
@@ -153,9 +153,10 @@ app.post('/iclock/cdata', async (req, res) => {
     const body = bodyToString(req.body);
     const lines = body.split(/\r?\n/).filter(Boolean);
     const results = [];
+    const timeZone = await resolveDeviceTimezone(db, device);
 
     for (const line of lines) {
-      const parsed = parseAttlogLine(line);
+      const parsed = parseAttlogLine(line, timeZone);
       if (!parsed) continue;
       try {
         const result = await processFingerprintPunch({

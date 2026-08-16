@@ -15,6 +15,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useLanguage } from '../context/LanguageContext';
 import { requestTypeKey } from '../i18n/translations';
 import type { HrRequest, HrRequestStatus } from '../types';
+import { colors } from '../constants/colors';
 
 export type RequestDashboardMode = 'staff' | 'manager';
 
@@ -137,7 +138,7 @@ export default function RequestDashboard({
           icon="check-circle-outline"
           label={t('approved')}
           value={counts.approved}
-          color="#059669"
+          color={colors.accent700}
         />
         <StatMini
           icon="close-circle-outline"

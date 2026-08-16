@@ -21,8 +21,9 @@ import {
 } from '../../services/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
+import { useCompany } from '../../context/CompanyContext';
 import PeriodField from '../../components/PeriodField';
-import { getFriendlyDateLabel, formatTime, formatDuration } from '../../utils/time';
+import { getFriendlyDateLabel, formatTime, formatDuration, resolveAttendanceTimezone } from '../../utils/time';
 import {
   currentPeriod,
   filterAttendanceByPeriod,
@@ -31,6 +32,7 @@ import {
 } from '../../utils/reports';
 import type { AttendanceRecord } from '../../types';
 import type { TranslationKey } from '../../i18n/translations';
+import { colors } from '../../constants/colors';
 
 function statusLabelKey(status: string): TranslationKey {
   switch (status) {
@@ -77,8 +79,10 @@ function StatusBadge({ status }: { status: string }) {
 
 function RecordCard({ record }: { record: AttendanceRecord }) {
   const { t } = useLanguage();
-  const clockInTime = record.clockIn ? formatTime(record.clockIn.toDate()) : '—';
-  const clockOutTime = record.clockOut ? formatTime(record.clockOut.toDate()) : '—';
+  const { company } = useCompany();
+  const tz = resolveAttendanceTimezone(record, company.timezone);
+  const clockInTime = record.clockIn ? formatTime(record.clockIn.toDate(), tz) : '—';
+  const clockOutTime = record.clockOut ? formatTime(record.clockOut.toDate(), tz) : '—';
   const hoursWorked = record.totalHours
     ? formatDuration(record.totalHours)
     : record.clockIn && !record.clockOut
@@ -107,7 +111,7 @@ function RecordCard({ record }: { record: AttendanceRecord }) {
         <View className="flex-1">
           <Text className="text-surface-400 text-xs uppercase font-medium">{t('clockIn')}</Text>
           <View className="flex-row items-center mt-1">
-            <MaterialCommunityIcons name="login-variant" size={16} color="#10B981" />
+            <MaterialCommunityIcons name="login-variant" size={16} color={colors.accent} />
             <Text className="text-surface-800 font-medium text-sm ml-1.5">{clockInTime}</Text>
           </View>
           {inSource ? (
@@ -246,8 +250,8 @@ export default function HistoryScreen() {
           <RefreshControl
             refreshing={loading}
             onRefresh={load}
-            tintColor="#1E3A5F"
-            colors={['#1E3A5F']}
+            tintColor={colors.primary}
+            colors={[colors.primary]}
           />
         }
         ListEmptyComponent={

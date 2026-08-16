@@ -3,12 +3,13 @@ import { View, Text, TouchableOpacity, FlatList, RefreshControl } from 'react-na
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNotifications } from '../../hooks/useNotifications';
 import { useLanguage } from '../../context/LanguageContext';
+import { colors } from '../../constants/colors';
 
 export function NotificationBell({ onPress }: { onPress: () => void }) {
   const { unreadCount } = useNotifications();
   return (
     <TouchableOpacity onPress={onPress} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-      <MaterialCommunityIcons name="bell-outline" size={24} color="#1E3A5F" />
+      <MaterialCommunityIcons name="bell-outline" size={24} color={colors.primary} />
       {unreadCount > 0 && (
         <View className="absolute -top-1 -right-1 bg-danger-500 rounded-full min-w-[16px] h-4 items-center justify-center px-1">
           <Text className="text-white text-[10px] font-bold">{unreadCount}</Text>

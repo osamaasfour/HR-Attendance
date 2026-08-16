@@ -232,6 +232,8 @@ export interface PayrollCalcInput {
   loans: Loan[];
   /** Weekdays that are OFF (0=Sun…6=Sat). Defaults to Sat+Sun. */
   weeklyOffDays?: number[];
+  /** YYYY-MM-DD company holidays in this period (not counted as absence). */
+  holidayDates?: Set<string>;
 }
 
 export interface PayrollCalcResult {
@@ -317,7 +319,8 @@ export function calculatePayslip(input: PayrollCalcInput): PayrollCalcResult {
       const day = d.getDay();
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
       const isOff = weeklyOffDays.includes(day);
-      if (!isOff && !presentDates.has(key) && !coveredDates.has(key)) {
+      const isHoliday = Boolean(input.holidayDates?.has(key));
+      if (!isOff && !isHoliday && !presentDates.has(key) && !coveredDates.has(key)) {
         absentDays += 1;
       }
       d.setDate(d.getDate() + 1);

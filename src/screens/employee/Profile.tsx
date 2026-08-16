@@ -29,6 +29,7 @@ import { NotificationBell } from '../shared/Notifications';
 import { uploadProfilePhoto } from '../../utils/uploadProfilePhoto';
 import LanguageSwitcher from '../../components/LanguageSwitcher';
 import type { AppLanguage } from '../../i18n/translations';
+import { colors } from '../../constants/colors';
 
 export default function ProfileScreen() {
   const { user, logout, refreshProfile } = useAuth();
@@ -262,7 +263,7 @@ export default function ProfileScreen() {
             className="bg-white border border-surface-200 rounded-xl h-14 items-center justify-center mt-4"
           >
             <View className="flex-row items-center">
-              <MaterialCommunityIcons name="account-edit-outline" size={22} color="#1E3A5F" />
+              <MaterialCommunityIcons name="account-edit-outline" size={22} color={colors.primary} />
               <Text className="text-primary-500 font-semibold text-base ml-2">
                 {t('editProfile')}
               </Text>
@@ -275,7 +276,7 @@ export default function ProfileScreen() {
           className="bg-white border border-surface-200 rounded-xl h-14 items-center justify-center mt-4"
         >
           <View className="flex-row items-center">
-            <MaterialCommunityIcons name="bell-outline" size={22} color="#1E3A5F" />
+            <MaterialCommunityIcons name="bell-outline" size={22} color={colors.primary} />
             <Text className="text-primary-500 font-semibold text-base ml-2">
               {t('notifications')}
             </Text>

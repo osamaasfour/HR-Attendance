@@ -24,5 +24,5 @@ try {
 New-Item -ItemType Directory -Force -Path apk | Out-Null
 $apk = Get-ChildItem "android\app\build\outputs\apk\release\*.apk" | Select-Object -First 1
 if (-not $apk) { throw "APK not found" }
-Copy-Item $apk.FullName "apk\HR-Attendance-1.0.0.apk" -Force
-Write-Host "APK ready: $root\apk\HR-Attendance-1.0.0.apk"
+Copy-Item $apk.FullName "apk\HR-Attendance-1.0.2.apk" -Force
+Write-Host "APK ready: $root\apk\HR-Attendance-1.0.2.apk"

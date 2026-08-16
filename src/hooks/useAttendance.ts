@@ -50,6 +50,7 @@ export function useAttendance() {
   const { showAlert } = useAppAlert();
   const { t } = useLanguage();
   const { tenant } = useCompany();
+  const companyTimezone = tenant.timezone || 'Africa/Cairo';
   const currentRecordRef = useRef<AttendanceRecord | null>(null);
 
   const [employeeShift, setEmployeeShift] = useState<WorkShift | null>(null);
@@ -97,6 +98,7 @@ export function useAttendance() {
       minute: '2-digit',
       second: '2-digit',
       hour12: true,
+      timeZone: companyTimezone,
     }),
   );
 
@@ -112,16 +114,17 @@ export function useAttendance() {
           minute: '2-digit',
           second: '2-digit',
           hour12: true,
+          timeZone: companyTimezone,
         }),
       );
     }, 1000);
     return () => clearInterval(interval);
-  }, []);
+  }, [companyTimezone]);
 
   const checkTodayStatus = useCallback(async () => {
     if (!user) return;
     try {
-      const today = toDateString();
+      const today = toDateString(new Date(), companyTimezone);
       const q = query(
         collection(db, 'attendance'),
         where('userId', '==', user.uid),
@@ -144,7 +147,7 @@ export function useAttendance() {
     } catch (error) {
       console.error('[Attendance] Failed to check today status:', error);
     }
-  }, [user]);
+  }, [user, companyTimezone]);
 
   const fetchHistory = useCallback(async () => {
     if (!user) return;
@@ -280,6 +283,7 @@ export function useAttendance() {
           latitude: OFFICE_LATITUDE,
           longitude: OFFICE_LONGITUDE,
           radiusMeters: GEOFENCE_RADIUS_METERS,
+          timezone: companyTimezone,
         },
       ];
     }
@@ -300,6 +304,7 @@ export function useAttendance() {
           latitude: Number(loc.latitude),
           longitude: Number(loc.longitude),
           radiusMeters: Number(loc.radiusMeters) || GEOFENCE_RADIUS_METERS,
+          timezone: loc.timezone || companyTimezone,
         }));
     } catch (error) {
       console.error('[Geofence] Failed to load work locations:', error);
@@ -346,12 +351,14 @@ export function useAttendance() {
     matchedLocation?: GeofenceSite | null,
   ): Promise<PunchResult> => {
     try {
-      const today = toDateString();
+      const punchTimezone = matchedLocation?.timezone || companyTimezone;
+      const today = toDateString(new Date(), punchTimezone);
       const now = new Date();
       const lateMinutes = computeLateMinutes(
         now,
         schedule.workStart,
         schedule.lateGraceMinutes,
+        punchTimezone,
       );
       const checkInPenaltyEligible = lateMinutes > 0;
       const status = calculateAttendanceStatus(0.1, lateMinutes, schedule.fullDayHours);
@@ -368,6 +375,7 @@ export function useAttendance() {
         clockOutLocation: null,
         workLocationId: matchedLocation?.id || null,
         workLocationName: matchedLocation?.name || null,
+        punchTimezone,
         status,
         date: today,
         lateMinutes,
@@ -380,7 +388,7 @@ export function useAttendance() {
       setClockState('clocked-in');
       return {
         success: true,
-        message: `${t('clockInSuccess')} ${formatTime(now)}`,
+        message: `${t('clockInSuccess')} ${formatTime(now, punchTimezone)}`,
         timestamp: now,
         recordId: newDocRef.id,
       };
@@ -393,7 +401,7 @@ export function useAttendance() {
           employeeId,
           location: { latitude, longitude },
           timestamp: new Date().toISOString(),
-          date: toDateString(),
+          date: toDateString(new Date(), companyTimezone),
         });
         setClockState('clocked-in');
         return {
@@ -422,10 +430,11 @@ export function useAttendance() {
     }
 
     try {
+      const punchTimezone = record.punchTimezone || companyTimezone;
       const now = new Date();
       const clockInTime = record.clockIn?.toDate() || now;
       const totalHours = calculateDuration(clockInTime, now);
-      const earlyLeaveMinutes = computeEarlyLeaveMinutes(now, schedule.workEnd);
+      const earlyLeaveMinutes = computeEarlyLeaveMinutes(now, schedule.workEnd, punchTimezone);
       const lateMinutes = record.lateMinutes || 0;
       const checkOutPenaltyEligible = earlyLeaveMinutes > schedule.lateGraceMinutes;
       const status = calculateAttendanceStatus(
@@ -454,7 +463,7 @@ export function useAttendance() {
       setClockState('idle');
       return {
         success: true,
-        message: `${t('clockOutSuccess')} ${formatTime(now)}`,
+        message: `${t('clockOutSuccess')} ${formatTime(now, punchTimezone)}`,
         timestamp: now,
         recordId: record.id,
       };
@@ -467,7 +476,7 @@ export function useAttendance() {
           employeeId: user!.employeeId,
           location: { latitude, longitude },
           timestamp: new Date().toISOString(),
-          date: toDateString(),
+          date: toDateString(new Date(), companyTimezone),
         });
         setClockState('idle');
         return {

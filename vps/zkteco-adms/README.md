@@ -80,9 +80,17 @@ IP_POLL_TIMEOUT_MS=10000
 PUNCH_TIMEZONE=Africa/Cairo
 ```
 
-Fingerprint terminals store **local wall-clock** time (no timezone). The service
-converts those times using `PUNCH_TIMEZONE` so the app shows the same clock the
-machine displayed. Keep this aligned with the timezone set on each terminal.
+Fingerprint terminals store **local wall-clock** time (no timezone). Each device's
+assigned **work location** has its own timezone in Admin → Work Locations. The VPS
+resolves punch times using this chain:
+
+1. `workLocations/{id}.timezone` (device's assigned site)
+2. `tenants/{tenantId}.timezone` (company default)
+3. `PUNCH_TIMEZONE` env (fallback only)
+4. `Africa/Cairo`
+
+Set timezone on each work location **before** rebuilding the VPS. `PUNCH_TIMEZONE`
+in `.env` is only used when a location has no timezone set.
 ---
 
 ## Updates (after code changes)

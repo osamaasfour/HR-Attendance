@@ -16,6 +16,7 @@ import SignupScreen from '../screens/Signup';
 import NotificationsScreen from '../screens/shared/Notifications';
 import OrgChartScreen from '../screens/shared/OrgChart';
 import PayslipDetailScreen from '../screens/shared/PayslipDetail';
+import { colors } from '../constants/colors';
 
 const Stack = createNativeStackNavigator();
 
@@ -23,12 +24,12 @@ const AppTheme = {
   ...DefaultTheme,
   colors: {
     ...DefaultTheme.colors,
-    primary: '#1E3A5F',
-    background: '#F8FAFC',
-    card: '#FFFFFF',
-    text: '#0F172A',
-    border: '#E2E8F0',
-    notification: '#EF4444',
+    primary: colors.primary,
+    background: colors.background,
+    card: colors.white,
+    text: colors.foreground,
+    border: colors.border,
+    notification: colors.danger,
   },
 };
 

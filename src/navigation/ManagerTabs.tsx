@@ -12,6 +12,7 @@ import OrgChartScreen from '../screens/shared/OrgChart';
 import ProfileScreen from '../screens/employee/Profile';
 import { useLanguage } from '../context/LanguageContext';
 import { SafeBottomTabBar } from './SafeBottomTabBar';
+import { colors } from '../constants/colors';
 
 const Tab = createBottomTabNavigator();
 
@@ -24,9 +25,9 @@ export function ManagerTabs() {
       screenOptions={{
         headerShown: false,
         tabBarShowLabel: true,
-        tabBarActiveTintColor: '#1E3A5F',
-        tabBarInactiveTintColor: '#94A3B8',
-        tabBarActiveBackgroundColor: '#F1F5F9',
+        tabBarActiveTintColor: colors.primary,
+        tabBarInactiveTintColor: colors.inactive,
+        tabBarActiveBackgroundColor: colors.surfaceInactive,
         tabBarLabelStyle: {
           fontSize: 10,
           fontWeight: '600',

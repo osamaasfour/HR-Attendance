@@ -2,14 +2,14 @@
   "expo": {
     "name": "HR Attendance",
     "slug": "hr-attendance-app",
-    "version": "1.0.0",
+    "version": "1.0.2",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "splash": {
       "image": "./assets/splash.png",
       "resizeMode": "contain",
-      "backgroundColor": "#1E3A5F"
+      "backgroundColor": "#259690"
     },
     "assetBundlePatterns": ["**/*"],
     "ios": {
@@ -24,10 +24,10 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#FFFFFF"
+        "backgroundColor": "#259690"
       },
       "package": "com.hrattendance.app",
-      "versionCode": 4,
+      "versionCode": 6,
       "edgeToEdgeEnabled": true,
       "permissions": [
         "ACCESS_COARSE_LOCATION",

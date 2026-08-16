@@ -10,6 +10,7 @@ import {
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { formatDate, toDateString } from '../utils/time';
 import { useLanguage } from '../context/LanguageContext';
+import { colors } from '../constants/colors';
 
 type Props = {
   label: string;
@@ -17,6 +18,7 @@ type Props = {
   onChange: (ymd: string) => void;
   minimumDate?: string;
   placeholder?: string;
+  compact?: boolean;
 };
 
 const WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
@@ -65,6 +67,7 @@ export default function DateField({
   onChange,
   minimumDate,
   placeholder,
+  compact,
 }: Props) {
   const { t } = useLanguage();
   const resolvedPlaceholder = placeholder || t('selectDate');
@@ -88,7 +91,7 @@ export default function DateField({
   const display = selected ? formatDate(selected) : resolvedPlaceholder;
 
   return (
-    <View className="mb-3">
+    <View className={compact ? '' : 'mb-3'}>
       <Text className="text-xs text-surface-400 mb-1">{label}</Text>
       <TouchableOpacity
         onPress={openPicker}
@@ -110,14 +113,14 @@ export default function DateField({
                 onPress={() => setViewMonth((m) => addMonths(m, -1))}
                 className="w-10 h-10 items-center justify-center rounded-full bg-surface-100"
               >
-                <MaterialCommunityIcons name="chevron-left" size={24} color="#1E3A5F" />
+                <MaterialCommunityIcons name="chevron-left" size={24} color={colors.primary} />
               </TouchableOpacity>
               <Text className="text-base font-semibold text-surface-800">{monthTitle(viewMonth)}</Text>
               <TouchableOpacity
                 onPress={() => setViewMonth((m) => addMonths(m, 1))}
                 className="w-10 h-10 items-center justify-center rounded-full bg-surface-100"
               >
-                <MaterialCommunityIcons name="chevron-right" size={24} color="#1E3A5F" />
+                <MaterialCommunityIcons name="chevron-right" size={24} color={colors.primary} />
               </TouchableOpacity>
             </View>
 
@@ -199,10 +202,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   daySelected: {
-    backgroundColor: '#1E3A5F',
+    backgroundColor: colors.primary,
   },
   dayToday: {
-    backgroundColor: '#EBF2FA',
+    backgroundColor: colors.primary50,
   },
   dayText: {
     fontSize: 14,

@@ -13,6 +13,7 @@ import LeaveScreen from '../screens/employee/Leave';
 import EmployeePayslipsScreen from '../screens/employee/Payslips';
 import { useLanguage } from '../context/LanguageContext';
 import { SafeBottomTabBar } from './SafeBottomTabBar';
+import { colors } from '../constants/colors';
 
 const Tab = createBottomTabNavigator();
 
@@ -25,9 +26,9 @@ export function EmployeeTabs() {
       screenOptions={{
         headerShown: false,
         tabBarShowLabel: true,
-        tabBarActiveTintColor: '#1E3A5F',
-        tabBarInactiveTintColor: '#94A3B8',
-        tabBarActiveBackgroundColor: '#F1F5F9',
+        tabBarActiveTintColor: colors.primary,
+        tabBarInactiveTintColor: colors.inactive,
+        tabBarActiveBackgroundColor: colors.surfaceInactive,
         tabBarLabelStyle: {
           fontSize: 11,
           fontWeight: '600',

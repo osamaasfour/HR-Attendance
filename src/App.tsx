@@ -15,6 +15,7 @@ import { LanguageProvider } from './context/LanguageContext';
 import { CompanyProvider } from './context/CompanyContext';
 import { RootNavigator } from './navigation/RootNavigator';
 import { LicenseExpiryWatcher } from './components/LicenseExpiryWatcher';
+import { colors } from './constants/colors';
 
 function useWebViewportFitCover() {
   useEffect(() => {
@@ -49,7 +50,7 @@ export default function App() {
           backgroundColor: '#FFFFFF',
         }}
       >
-        <ActivityIndicator size="large" color="#1E3A5F" />
+        <ActivityIndicator size="large" color={colors.primary} />
       </View>
     );
   }

@@ -46,8 +46,10 @@ import { uploadCompanyLogo } from '../../utils/uploadCompanyLogo';
 import { COUNTRY_OPTIONS, CURRENCY_OPTIONS } from '../../utils/formatMoney';
 import { emailSettingsDocId } from '../../utils/sendEmail';
 import TimeField, { formatTime12h } from '../../components/TimeField';
+import HolidayManager from '../../components/HolidayManager';
 import { checkTenantLicense, formatLicenseExpiry } from '../../utils/tenantLicense';
 import { LicenseExpiryBanner } from '../../components/LicenseExpiryBanner';
+import { colors } from '../../constants/colors';
 
 const WEEKDAY_KEYS: { day: WeekdayNumber; labelKey: string }[] = [
   { day: 0, labelKey: 'daySun' },
@@ -83,6 +85,12 @@ export default function AdminSettingsScreen() {
   const [companyName, setCompanyName] = useState(company.name);
   const [countryCode, setCountryCode] = useState(company.countryCode || 'EG');
   const [currencyCode, setCurrencyCode] = useState(company.currencyCode || 'EGP');
+  const [taxRegistrationNumber, setTaxRegistrationNumber] = useState(
+    tenant.taxRegistrationNumber || '',
+  );
+  const [socialInsuranceNumber, setSocialInsuranceNumber] = useState(
+    tenant.socialInsuranceNumber || '',
+  );
 
   const [workStart, setWorkStart] = useState(DEFAULT_WORK_SCHEDULE.workStart);
   const [workEnd, setWorkEnd] = useState(DEFAULT_WORK_SCHEDULE.workEnd);
@@ -127,7 +135,9 @@ export default function AdminSettingsScreen() {
     setCompanyName(company.name);
     setCountryCode(company.countryCode || 'EG');
     setCurrencyCode(company.currencyCode || 'EGP');
-  }, [company]);
+    setTaxRegistrationNumber(tenant.taxRegistrationNumber || '');
+    setSocialInsuranceNumber(tenant.socialInsuranceNumber || '');
+  }, [company, tenant.taxRegistrationNumber, tenant.socialInsuranceNumber]);
 
   useEffect(() => {
     applySchedule(tenant.workSchedule);
@@ -207,6 +217,8 @@ export default function AdminSettingsScreen() {
           countryCode === 'EG'
             ? 'en-EG'
             : `en-${countryCode === 'OTHER' ? 'US' : countryCode}`,
+        taxRegistrationNumber: taxRegistrationNumber.trim(),
+        socialInsuranceNumber: socialInsuranceNumber.trim(),
         updatedBy: user?.uid,
       });
       showAlert(t('success'), t('companySaved'));
@@ -460,7 +472,7 @@ export default function AdminSettingsScreen() {
   if (loading) {
     return (
       <View className="flex-1 bg-surface-50 items-center justify-center">
-        <ActivityIndicator color="#1E3A5F" size="large" />
+        <ActivityIndicator color={colors.primary} size="large" />
       </View>
     );
   }
@@ -480,7 +492,7 @@ export default function AdminSettingsScreen() {
       >
         <View className="bg-white rounded-2xl p-4 border border-surface-100 mb-4">
           <View className="flex-row items-center mb-3">
-            <MaterialCommunityIcons name="office-building-outline" size={22} color="#1E3A5F" />
+            <MaterialCommunityIcons name="office-building-outline" size={22} color={colors.primary} />
             <Text className="text-lg font-bold text-surface-800 ml-2">{t('tenantSection')}</Text>
           </View>
           <Text className="text-surface-400 text-xs mb-2">{t('yourTenant')}</Text>
@@ -520,7 +532,7 @@ export default function AdminSettingsScreen() {
 
         <View className="bg-white rounded-2xl p-4 border border-surface-100 mb-4">
           <View className="flex-row items-center mb-3">
-            <MaterialCommunityIcons name="domain" size={22} color="#1E3A5F" />
+            <MaterialCommunityIcons name="domain" size={22} color={colors.primary} />
             <Text className="text-lg font-bold text-surface-800 ml-2">{t('companySettings')}</Text>
           </View>
           <Text className="text-surface-400 text-xs mb-3">
@@ -546,7 +558,7 @@ export default function AdminSettingsScreen() {
             </TouchableOpacity>
             <TouchableOpacity onPress={pickLogo} disabled={uploadingLogo} className="mt-2">
               {uploadingLogo ? (
-                <ActivityIndicator color="#1E3A5F" />
+                <ActivityIndicator color={colors.primary} />
               ) : (
                 <Text className="text-primary-500 text-sm font-semibold">{t('uploadLogo')}</Text>
               )}
@@ -558,6 +570,21 @@ export default function AdminSettingsScreen() {
             className="border border-surface-200 rounded-xl px-3 h-11 mb-3"
             value={companyName}
             onChangeText={setCompanyName}
+          />
+
+          <Text className="text-xs text-surface-400 mb-1">{t('taxRegistrationNumber')}</Text>
+          <TextInput
+            className="border border-surface-200 rounded-xl px-3 h-11 mb-3"
+            value={taxRegistrationNumber}
+            onChangeText={setTaxRegistrationNumber}
+            placeholder={t('taxRegistrationNumber')}
+          />
+          <Text className="text-xs text-surface-400 mb-1">{t('socialInsuranceNumber')}</Text>
+          <TextInput
+            className="border border-surface-200 rounded-xl px-3 h-11 mb-3"
+            value={socialInsuranceNumber}
+            onChangeText={setSocialInsuranceNumber}
+            placeholder={t('socialInsuranceNumber')}
           />
 
           <Text className="text-xs text-surface-400 mb-1">{t('country')}</Text>
@@ -621,7 +648,7 @@ export default function AdminSettingsScreen() {
 
         <View className="bg-white rounded-2xl p-4 border border-surface-100 mb-4">
           <View className="flex-row items-center mb-2">
-            <MaterialCommunityIcons name="calendar-clock" size={22} color="#1E3A5F" />
+            <MaterialCommunityIcons name="calendar-clock" size={22} color={colors.primary} />
             <Text className="text-lg font-bold text-surface-800 ml-2">
               {t('workScheduleTitle')}
             </Text>
@@ -711,7 +738,7 @@ export default function AdminSettingsScreen() {
         <View className="bg-white rounded-2xl p-4 border border-surface-100 mb-4">
           <View className="flex-row items-center justify-between mb-2">
             <View className="flex-row items-center flex-1">
-              <MaterialCommunityIcons name="clock-outline" size={22} color="#1E3A5F" />
+              <MaterialCommunityIcons name="clock-outline" size={22} color={colors.primary} />
               <Text className="text-lg font-bold text-surface-800 ml-2">{t('shiftsTitle')}</Text>
             </View>
             <TouchableOpacity
@@ -849,9 +876,11 @@ export default function AdminSettingsScreen() {
           )}
         </View>
 
+        <HolidayManager />
+
         <View className="bg-white rounded-2xl p-4 border border-surface-100 mb-4">
           <View className="flex-row items-center mb-3">
-            <MaterialCommunityIcons name="email-fast-outline" size={22} color="#1E3A5F" />
+            <MaterialCommunityIcons name="email-fast-outline" size={22} color={colors.primary} />
             <Text className="text-lg font-bold text-surface-800 ml-2">{t('emailjsTitle')}</Text>
           </View>
           <Text className="text-surface-400 text-xs mb-2">{t('managerEmailHint')}</Text>
@@ -868,7 +897,7 @@ export default function AdminSettingsScreen() {
               value={enabled}
               onValueChange={setEnabled}
               trackColor={{ false: '#E2E8F0', true: '#93C5FD' }}
-              thumbColor={enabled ? '#1E3A5F' : '#F8FAFC'}
+              thumbColor={enabled ? colors.primary : colors.switchTrack}
             />
           </View>
 

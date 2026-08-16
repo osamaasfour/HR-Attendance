@@ -2,7 +2,7 @@
  * Admin All Records Screen
  */
 
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -11,12 +11,17 @@ import {
   TouchableOpacity,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useAdminData } from '../../hooks/useAdminData';
+import { db, collection, getDocs, query, where } from '../../services/firebase';
+import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
-import { formatTime, formatDuration, toDateString } from '../../utils/time';
+import { useCompany } from '../../context/CompanyContext';
+import { useAppAlert } from '../../context/AlertContext';
+import DateField from '../../components/DateField';
+import { formatTime, formatDuration, toDateString, resolveAttendanceTimezone } from '../../utils/time';
 import { toCsv, downloadCsv } from '../../utils/csv';
 import type { AttendanceRecord } from '../../types';
 import type { TranslationKey } from '../../i18n/translations';
+import { colors } from '../../constants/colors';
 
 function statusLabelKey(status: string): TranslationKey {
   switch (status) {
@@ -60,8 +65,10 @@ function StatusBadge({ status }: { status: string }) {
 
 function RecordCard({ record }: { record: AttendanceRecord }) {
   const { t } = useLanguage();
-  const clockInTime = record.clockIn ? formatTime(record.clockIn.toDate()) : '—';
-  const clockOutTime = record.clockOut ? formatTime(record.clockOut.toDate()) : '—';
+  const { company } = useCompany();
+  const tz = resolveAttendanceTimezone(record, company.timezone);
+  const clockInTime = record.clockIn ? formatTime(record.clockIn.toDate(), tz) : '—';
+  const clockOutTime = record.clockOut ? formatTime(record.clockOut.toDate(), tz) : '—';
   const hoursWorked = record.totalHours
     ? formatDuration(record.totalHours)
     : record.clockIn && !record.clockOut
@@ -88,7 +95,10 @@ function RecordCard({ record }: { record: AttendanceRecord }) {
           </View>
           <View>
             <Text className="text-surface-800 font-semibold text-sm">{record.userName}</Text>
-            <Text className="text-surface-400 text-xs">{record.employeeId}</Text>
+            <Text className="text-surface-400 text-xs">
+              {record.employeeId}
+              {record.date ? ` · ${record.date}` : ''}
+            </Text>
           </View>
         </View>
         <StatusBadge status={record.status} />
@@ -96,7 +106,7 @@ function RecordCard({ record }: { record: AttendanceRecord }) {
 
       <View className="flex-row justify-between bg-surface-50 rounded-lg p-3">
         <View className="flex-1 items-center">
-          <MaterialCommunityIcons name="login-variant" size={18} color="#10B981" />
+          <MaterialCommunityIcons name="login-variant" size={18} color={colors.accent} />
           <Text className="text-surface-400 text-xs mt-1">{t('clockIn')}</Text>
           <Text className="text-surface-800 font-semibold text-sm mt-0.5">{clockInTime}</Text>
           {inSource ? (
@@ -118,7 +128,7 @@ function RecordCard({ record }: { record: AttendanceRecord }) {
         <View className="w-px bg-surface-200 mx-2" />
 
         <View className="flex-1 items-center">
-          <MaterialCommunityIcons name="clock-outline" size={18} color="#1E3A5F" />
+          <MaterialCommunityIcons name="clock-outline" size={18} color={colors.primary} />
           <Text className="text-surface-400 text-xs mt-1">{t('hours')}</Text>
           <Text className="text-primary-500 font-semibold text-sm mt-0.5">{hoursWorked}</Text>
         </View>
@@ -137,32 +147,80 @@ function EmptyState() {
   );
 }
 
+function shiftYmd(ymd: string, delta: number): string {
+  const d = new Date(ymd + 'T12:00:00');
+  d.setDate(d.getDate() + delta);
+  return toDateString(d);
+}
+
 export default function AdminAllRecordsScreen() {
   const { t } = useLanguage();
-  const [selectedDate, setSelectedDate] = useState(toDateString());
-  const { todayRecords, isRefreshing, refresh } = useAdminData(selectedDate);
+  const { user } = useAuth();
+  const { company } = useCompany();
+  const { showAlert } = useAppAlert();
+  const tid = user?.tenantId || company.id || 'default';
+  const today = toDateString();
+  const [startDate, setStartDate] = useState(today);
+  const [endDate, setEndDate] = useState(today);
+  const [records, setRecords] = useState<AttendanceRecord[]>([]);
+  const [loading, setLoading] = useState(false);
 
-  const shiftDay = (delta: number) => {
-    const d = new Date(selectedDate + 'T12:00:00');
-    d.setDate(d.getDate() + delta);
-    setSelectedDate(toDateString(d));
+  const from = startDate <= endDate ? startDate : endDate;
+  const to = startDate <= endDate ? endDate : startDate;
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const attQuery = query(
+        collection(db, 'attendance'),
+        where('date', '>=', from),
+        where('date', '<=', to),
+      );
+      const snap = await getDocs(attQuery);
+      const rows = snap.docs
+        .map((d) => ({ ...(d.data() as AttendanceRecord), id: d.id }))
+        .filter((a) => (a.tenantId || 'default') === tid || !a.tenantId)
+        .sort((a, b) => {
+          const byDate = (b.date || '').localeCompare(a.date || '');
+          if (byDate !== 0) return byDate;
+          return (a.userName || '').localeCompare(b.userName || '');
+        });
+      setRecords(rows);
+    } catch (e: any) {
+      showAlert(t('error'), e?.message || t('actionFailed'));
+    } finally {
+      setLoading(false);
+    }
+  }, [from, to, tid, showAlert, t]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const shiftRange = (delta: number) => {
+    setStartDate((s) => shiftYmd(s, delta));
+    setEndDate((e) => shiftYmd(e, delta));
   };
 
   const exportCsv = async () => {
-    const rows = todayRecords.map((r) => [
-      r.employeeId,
-      r.userName,
-      r.date,
-      r.clockIn?.toDate?.()?.toLocaleTimeString?.() || '',
-      r.clockOut?.toDate?.()?.toLocaleTimeString?.() || '',
-      r.totalHours ?? '',
-      r.status,
-    ]);
+    const rows = records.map((r) => {
+      const tz = resolveAttendanceTimezone(r, company.timezone);
+      return [
+        r.employeeId,
+        r.userName,
+        r.date,
+        r.clockIn?.toDate?.() ? formatTime(r.clockIn.toDate(), tz) : '',
+        r.clockOut?.toDate?.() ? formatTime(r.clockOut.toDate(), tz) : '',
+        r.totalHours ?? '',
+        r.status,
+      ];
+    });
     const csv = toCsv(
       ['employeeId', 'name', 'date', 'clockIn', 'clockOut', 'hours', 'status'],
       rows,
     );
-    await downloadCsv(`attendance-${selectedDate}.csv`, csv);
+    const name = from === to ? `attendance-${from}.csv` : `attendance-${from}-to-${to}.csv`;
+    await downloadCsv(name, csv);
   };
 
   return (
@@ -174,32 +232,58 @@ export default function AdminAllRecordsScreen() {
             <Text className="text-primary-500 text-xs font-semibold">{t('exportCsv')}</Text>
           </TouchableOpacity>
         </View>
+
+        <View className="flex-row mt-3">
+          <View className="flex-1 mr-2">
+            <DateField
+              compact
+              label={t('recordsDateFrom')}
+              value={startDate}
+              onChange={(ymd) => {
+                setStartDate(ymd);
+                if (ymd > endDate) setEndDate(ymd);
+              }}
+            />
+          </View>
+          <View className="flex-1">
+            <DateField
+              compact
+              label={t('recordsDateTo')}
+              value={endDate}
+              onChange={setEndDate}
+              minimumDate={startDate}
+            />
+          </View>
+        </View>
+
         <View className="flex-row items-center mt-3">
-          <TouchableOpacity onPress={() => shiftDay(-1)} className="px-3 py-2 bg-surface-100 rounded-lg">
+          <TouchableOpacity onPress={() => shiftRange(-1)} className="px-3 py-2 bg-surface-100 rounded-lg">
             <Text className="text-surface-700 font-semibold">{t('prev')}</Text>
           </TouchableOpacity>
-          <Text className="flex-1 text-center text-surface-800 font-semibold">{selectedDate}</Text>
-          <TouchableOpacity onPress={() => shiftDay(1)} className="px-3 py-2 bg-surface-100 rounded-lg">
+          <Text className="flex-1 text-center text-surface-800 font-semibold">
+            {t('recordsPeriodHint', { start: from, end: to })}
+          </Text>
+          <TouchableOpacity onPress={() => shiftRange(1)} className="px-3 py-2 bg-surface-100 rounded-lg">
             <Text className="text-surface-700 font-semibold">{t('next')}</Text>
           </TouchableOpacity>
         </View>
         <Text className="text-surface-400 text-sm mt-2">
-          {t('peopleCount', { count: todayRecords.length })}
+          {t('peopleCount', { count: records.length })}
         </Text>
       </View>
 
       <FlatList
-        data={todayRecords}
+        data={records}
         keyExtractor={(item) => item.id}
         renderItem={({ item }) => <RecordCard record={item} />}
         contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 24 }}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
-            refreshing={isRefreshing}
-            onRefresh={refresh}
-            tintColor="#1E3A5F"
-            colors={['#1E3A5F']}
+            refreshing={loading}
+            onRefresh={load}
+            tintColor={colors.primary}
+            colors={[colors.primary]}
           />
         }
         ListEmptyComponent={<EmptyState />}

@@ -13,6 +13,14 @@ const {
   calculateAttendanceStatus,
   normalizeEmployeeId,
 } = require('./attendanceMath');
+const { resolveTimezoneFromLocation } = require('./deviceTimezone');
+
+async function loadWorkLocation(db, device) {
+  if (!device.workLocationId) return null;
+  const locSnap = await db.collection('workLocations').doc(device.workLocationId).get();
+  if (!locSnap.exists) return null;
+  return { id: locSnap.id, ...locSnap.data() };
+}
 
 async function resolveSchedule(db, user, tenantId) {
   if (user.workShiftId) {
@@ -83,6 +91,8 @@ async function writePunchLog(db, entry) {
  */
 async function processFingerprintPunch({ db, device, rawLine, pin, punchTime, externalPunchId }) {
   const tenantId = device.tenantId || 'default';
+  const workLocation = await loadWorkLocation(db, device);
+  const punchTimezone = await resolveTimezoneFromLocation(workLocation, tenantId, db);
   const baseLog = {
     deviceSerial: device.serialNumber,
     deviceId: device.id,
@@ -109,7 +119,7 @@ async function processFingerprintPunch({ db, device, rawLine, pin, punchTime, ex
     return { ok: false, reason: 'user_not_found' };
   }
 
-  const date = toDateString(punchTime);
+  const date = toDateString(punchTime, punchTimezone);
   const existing = await findTodayRecord(db, user.uid, date);
 
   if (externalPunchId && existing?.externalPunchId === externalPunchId) {
@@ -135,12 +145,6 @@ async function processFingerprintPunch({ db, device, rawLine, pin, punchTime, ex
     return { ok: true, action: 'ignored_duplicate' };
   }
 
-  let workLocation = null;
-  if (device.workLocationId) {
-    const locSnap = await db.collection('workLocations').doc(device.workLocationId).get();
-    if (locSnap.exists) workLocation = { id: locSnap.id, ...locSnap.data() };
-  }
-
   const lat = workLocation?.latitude ?? 0;
   const lng = workLocation?.longitude ?? 0;
   const geo = new GeoPoint(lat, lng);
@@ -163,7 +167,11 @@ async function processFingerprintPunch({ db, device, rawLine, pin, punchTime, ex
   if (openRecord) {
     const clockInTime = openRecord.clockIn.toDate();
     const totalHours = calculateDuration(clockInTime, punchTime);
-    const earlyLeaveMinutes = computeEarlyLeaveMinutes(punchTime, schedule.workEnd);
+    const earlyLeaveMinutes = computeEarlyLeaveMinutes(
+      punchTime,
+      schedule.workEnd,
+      punchTimezone,
+    );
     const lateMinutes = openRecord.lateMinutes || 0;
     const checkOutPenaltyEligible = earlyLeaveMinutes > schedule.lateGraceMinutes;
     const status = calculateAttendanceStatus(totalHours, lateMinutes, schedule.fullDayHours);
@@ -173,6 +181,7 @@ async function processFingerprintPunch({ db, device, rawLine, pin, punchTime, ex
       clockOutLocation: geo,
       clockOutSource: 'fingerprint',
       clockOutDeviceId: device.id,
+      punchTimezone,
       status,
       totalHours,
       earlyLeaveMinutes,
@@ -197,7 +206,12 @@ async function processFingerprintPunch({ db, device, rawLine, pin, punchTime, ex
     return { ok: true, action: 'clock-out', recordId: openRecord.id };
   }
 
-  const lateMinutes = computeLateMinutes(punchTime, schedule.workStart, schedule.lateGraceMinutes);
+  const lateMinutes = computeLateMinutes(
+    punchTime,
+    schedule.workStart,
+    schedule.lateGraceMinutes,
+    punchTimezone,
+  );
   const checkInPenaltyEligible = lateMinutes > 0;
   const status = calculateAttendanceStatus(0.1, lateMinutes, schedule.fullDayHours);
 
@@ -212,6 +226,7 @@ async function processFingerprintPunch({ db, device, rawLine, pin, punchTime, ex
     clockOutLocation: null,
     workLocationId: workLocation?.id || device.workLocationId || null,
     workLocationName: workLocation?.name || device.workLocationName || null,
+    punchTimezone,
     status,
     date,
     lateMinutes,

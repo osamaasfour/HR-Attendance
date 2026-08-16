@@ -20,6 +20,7 @@ import RequestDashboard from '../../components/RequestDashboard';
 import { uploadHrAttachment } from '../../utils/uploadHrAttachment';
 import { requestTypeKey } from '../../i18n/translations';
 import type { HrRequestType } from '../../types';
+import { colors } from '../../constants/colors';
 
 const RANGE_TYPES: HrRequestType[] = ['vacation', 'sick', 'unpaid', 'business_trip'];
 const TIME_TYPES: HrRequestType[] = ['early_leave', 'late_arrive', 'missing'];
@@ -309,7 +310,7 @@ export default function EmployeeRequestsScreen() {
                   <MaterialCommunityIcons
                     name={attachment ? 'file-check-outline' : 'upload-outline'}
                     size={22}
-                    color="#1E3A5F"
+                    color={colors.primary}
                   />
                 </TouchableOpacity>
                 {!!attachment && (

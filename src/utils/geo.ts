@@ -118,6 +118,7 @@ export type GeofenceSite = {
   latitude: number;
   longitude: number;
   radiusMeters: number;
+  timezone?: string;
 };
 
 /**

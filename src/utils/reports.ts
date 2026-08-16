@@ -155,6 +155,7 @@ export function countAbsencesForUser(input: {
   requests: HrRequest[];
   shiftsById: Map<string, WorkShift>;
   tenantSchedule?: WorkSchedule | null;
+  holidayDates?: Set<string>;
 }): { absentDays: number; absentDates: string[] } {
   const { start, end } = periodBounds(input.period);
   const schedule = scheduleForUser(input.user, input.shiftsById, input.tenantSchedule);
@@ -193,7 +194,8 @@ export function countAbsencesForUser(input: {
   while (cursor <= lastDay && cursor < today) {
     const key = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`;
     const isOff = weeklyOff.includes(cursor.getDay() as 0 | 1 | 2 | 3 | 4 | 5 | 6);
-    if (!isOff && !presentDates.has(key) && !covered.has(key)) {
+    const isHoliday = Boolean(input.holidayDates?.has(key));
+    if (!isOff && !isHoliday && !presentDates.has(key) && !covered.has(key)) {
       absentDates.push(key);
     }
     cursor.setDate(cursor.getDate() + 1);

@@ -13,6 +13,7 @@ import {
   ActivityIndicator,
   ScrollView,
 } from 'react-native';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import {
   db,
   collection,
@@ -25,6 +26,8 @@ import {
 import { useAuth } from '../../context/AuthContext';
 import { useAppAlert } from '../../context/AlertContext';
 import { useLanguage } from '../../context/LanguageContext';
+import { useCompany } from '../../context/CompanyContext';
+import { LOCATION_TIMEZONE_OPTIONS, DEFAULT_PUNCH_TIMEZONE } from '../../constants/timezones';
 import type { WorkLocation } from '../../types';
 
 const DEFAULT_RADIUS = 100;
@@ -33,7 +36,9 @@ export default function AdminWorkLocationsScreen() {
   const { user } = useAuth();
   const { showAlert } = useAppAlert();
   const { t } = useLanguage();
+  const { company } = useCompany();
   const tenantId = user?.tenantId || 'default';
+  const defaultTimezone = company.timezone || DEFAULT_PUNCH_TIMEZONE;
 
   const [locations, setLocations] = useState<WorkLocation[]>([]);
   const [loading, setLoading] = useState(false);
@@ -45,6 +50,7 @@ export default function AdminWorkLocationsScreen() {
   const [latitude, setLatitude] = useState('');
   const [longitude, setLongitude] = useState('');
   const [radiusMeters, setRadiusMeters] = useState(String(DEFAULT_RADIUS));
+  const [timezone, setTimezone] = useState(defaultTimezone);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -71,12 +77,14 @@ export default function AdminWorkLocationsScreen() {
     setLatitude('');
     setLongitude('');
     setRadiusMeters(String(DEFAULT_RADIUS));
+    setTimezone(defaultTimezone);
     setEditing(null);
     setCreating(false);
   };
 
   const openCreate = () => {
     resetForm();
+    setTimezone(defaultTimezone);
     setCreating(true);
   };
 
@@ -87,6 +95,7 @@ export default function AdminWorkLocationsScreen() {
     setLatitude(String(loc.latitude));
     setLongitude(String(loc.longitude));
     setRadiusMeters(String(loc.radiusMeters ?? DEFAULT_RADIUS));
+    setTimezone(loc.timezone || defaultTimezone);
   };
 
   const parseCoords = () => {
@@ -123,6 +132,7 @@ export default function AdminWorkLocationsScreen() {
           latitude: parsed.lat,
           longitude: parsed.lng,
           radiusMeters: parsed.radius,
+          timezone,
           updatedAt: Timestamp.now(),
         });
         showAlert(t('success'), t('locationUpdated'));
@@ -132,6 +142,7 @@ export default function AdminWorkLocationsScreen() {
           latitude: parsed.lat,
           longitude: parsed.lng,
           radiusMeters: parsed.radius,
+          timezone,
           tenantId,
           active: true,
           createdAt: Timestamp.now(),
@@ -162,29 +173,31 @@ export default function AdminWorkLocationsScreen() {
 
   const formOpen = creating || !!editing;
 
-  return (
-    <View className="flex-1 bg-surface-50">
-      <View className="px-4 pt-4 pb-2 flex-row items-center justify-between">
-        <View className="flex-1 mr-2">
-          <Text className="text-xl font-bold text-surface-900">{t('navLocations')}</Text>
-          <Text className="text-sm text-surface-500 mt-1">{t('locationsSubtitle')}</Text>
-        </View>
-        {!formOpen && (
+  if (formOpen) {
+    return (
+      <View className="flex-1 bg-surface-50">
+        <View className="px-4 pt-4 pb-3 flex-row items-center border-b border-surface-100 bg-white">
           <TouchableOpacity
-            onPress={openCreate}
-            className="bg-primary-500 px-4 py-2.5 rounded-xl"
+            onPress={resetForm}
+            className="w-10 h-10 rounded-full bg-surface-100 items-center justify-center mr-3"
+            accessibilityRole="button"
+            accessibilityLabel={t('cancel')}
           >
-            <Text className="text-white font-semibold text-sm">{t('addLocation')}</Text>
+            <MaterialCommunityIcons name="arrow-left" size={22} color="#475569" />
           </TouchableOpacity>
-        )}
-      </View>
-
-      {formOpen && (
-        <ScrollView className="mx-4 mb-3 max-h-[420px]">
-          <View className="bg-white rounded-2xl p-4 border border-surface-100">
-            <Text className="text-base font-semibold text-surface-800 mb-3">
+          <View className="flex-1">
+            <Text className="text-xl font-bold text-surface-900">
               {editing ? t('editLocation') : t('addLocation')}
             </Text>
+          </View>
+        </View>
+
+        <ScrollView
+          className="flex-1"
+          contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: 32 }}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View className="bg-white rounded-2xl p-4 border border-surface-100">
             <Text className="text-xs text-surface-400 mb-1">{t('locationName')}</Text>
             <TextInput
               className="border border-surface-200 rounded-xl px-3 h-11 mb-2"
@@ -217,6 +230,30 @@ export default function AdminWorkLocationsScreen() {
               onChangeText={setRadiusMeters}
             />
             <Text className="text-xs text-surface-400 mb-3">{t('locationCoordsHint')}</Text>
+            <Text className="text-xs text-surface-400 mb-1">{t('locationTimezone')}</Text>
+            <View className="flex-row flex-wrap mb-2">
+              {LOCATION_TIMEZONE_OPTIONS.map((opt) => {
+                const selected = timezone === opt.value;
+                return (
+                  <TouchableOpacity
+                    key={opt.value}
+                    onPress={() => setTimezone(opt.value)}
+                    className={`px-3 py-2 rounded-lg mr-2 mb-2 border ${
+                      selected ? 'bg-primary-50 border-primary-300' : 'bg-surface-50 border-surface-200'
+                    }`}
+                  >
+                    <Text
+                      className={`text-xs font-medium ${
+                        selected ? 'text-primary-700' : 'text-surface-600'
+                      }`}
+                    >
+                      {opt.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+            <Text className="text-xs text-surface-400 mb-6">{t('locationTimezoneHint')}</Text>
             <View className="flex-row">
               <TouchableOpacity
                 onPress={resetForm}
@@ -240,7 +277,24 @@ export default function AdminWorkLocationsScreen() {
             </View>
           </View>
         </ScrollView>
-      )}
+      </View>
+    );
+  }
+
+  return (
+    <View className="flex-1 bg-surface-50">
+      <View className="px-4 pt-4 pb-2 flex-row items-center justify-between">
+        <View className="flex-1 mr-2">
+          <Text className="text-xl font-bold text-surface-900">{t('navLocations')}</Text>
+          <Text className="text-sm text-surface-500 mt-1">{t('locationsSubtitle')}</Text>
+        </View>
+        <TouchableOpacity
+          onPress={openCreate}
+          className="bg-primary-500 px-4 py-2.5 rounded-xl"
+        >
+          <Text className="text-white font-semibold text-sm">{t('addLocation')}</Text>
+        </TouchableOpacity>
+      </View>
 
       <FlatList
         data={locations}
@@ -257,6 +311,9 @@ export default function AdminWorkLocationsScreen() {
             <Text className="font-semibold text-surface-800 text-base">{item.name}</Text>
             <Text className="text-surface-500 text-sm mt-1">
               {item.latitude.toFixed(5)}, {item.longitude.toFixed(5)} · {item.radiusMeters}m
+            </Text>
+            <Text className="text-surface-400 text-xs mt-1">
+              {item.timezone || defaultTimezone}
             </Text>
             <Text className="text-surface-400 text-xs mt-1">
               {item.active === false ? t('inactiveStatus') : t('activeStatus')}

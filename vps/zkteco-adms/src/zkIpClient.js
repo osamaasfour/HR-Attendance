@@ -70,8 +70,9 @@ function isTimeoutError(msg) {
   return /TIME\s*OUT|timeout|ETIMEDOUT|PACKETS REMAIN/i.test(String(msg || ''));
 }
 
-function normalizeAttendanceLog(entry) {
+function normalizeAttendanceLog(entry, timeZone) {
   if (!entry || typeof entry !== 'object') return null;
+  const tz = timeZone || getPunchTimezone();
 
   const pin = String(
     entry.deviceUserId ??
@@ -84,12 +85,11 @@ function normalizeAttendanceLog(entry) {
 
   const rawTime =
     entry.recordTime ?? entry.timestamp ?? entry.attTime ?? entry.time ?? null;
-  const punchTime = coerceDevicePunchTime(rawTime);
+  const punchTime = coerceDevicePunchTime(rawTime, tz);
 
   if (!pin || !punchTime) return null;
 
-  // Stable id from device wall clock in company timezone
-  const timeStr = punchTime.toLocaleString('sv-SE', { timeZone: getPunchTimezone() });
+  const timeStr = punchTime.toLocaleString('sv-SE', { timeZone: tz });
   const status = entry.punch ?? entry.status ?? entry.type ?? entry.state ?? '0';
   const externalPunchId = `${pin}:${timeStr}:${status}`;
   const rawLine = JSON.stringify({
@@ -150,6 +150,7 @@ async function fetchAttendanceLogs({
   timeoutMs = 300000,
   password,
   commKey,
+  timeZone,
 }) {
   if (!host) throw new Error('host is required');
 
@@ -166,7 +167,9 @@ async function fetchAttendanceLogs({
       );
       const rows = await downloadOnce(client, host, port);
       console.log(`[zk-ip] fetched ${rows.length} log(s) from ${host}:${port}`);
-      return rows.map(normalizeAttendanceLog).filter(Boolean);
+      return rows
+        .map((row) => normalizeAttendanceLog(row, timeZone || getPunchTimezone()))
+        .filter(Boolean);
     } catch (e) {
       lastErr = e;
       const msg = formatError(e);

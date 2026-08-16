@@ -7,6 +7,7 @@
 const { Timestamp } = require('firebase-admin/firestore');
 const { fetchAttendanceLogs, clearAttendanceLogOnDevice } = require('./zkIpClient');
 const { processFingerprintPunch } = require('./punchProcessor');
+const { resolveDeviceTimezone } = require('./deviceTimezone');
 
 const DEFAULT_INTERVAL_MS = 90_000;
 const DEFAULT_TIMEOUT_MS = 300_000;
@@ -94,6 +95,7 @@ async function pollOneDevice(db, device, timeoutMs) {
   }
 
   let logs;
+  const timeZone = await resolveDeviceTimezone(db, device);
   try {
     logs = await fetchAttendanceLogs({
       host,
@@ -101,6 +103,7 @@ async function pollOneDevice(db, device, timeoutMs) {
       timeoutMs,
       password: device.deviceSecret,
       commKey: device.deviceSecret,
+      timeZone,
     });
   } catch (e) {
     const msg = formatError(e).slice(0, 500);

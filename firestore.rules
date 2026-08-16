@@ -153,6 +153,16 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    match /holidays/{holidayId} {
+      allow read: if isPlatformAdmin() || (isSignedIn() && sameTenant());
+      allow create: if isPlatformAdmin()
+        || (isAdmin() && writesOwnTenant()
+          && request.resource.data.keys().hasAll(['name', 'tenantId'])
+          && (request.resource.data.keys().hasAll(['startDate', 'endDate'])
+              || request.resource.data.keys().hasAny(['date'])));
+      allow update, delete: if isPlatformAdmin() || (isAdmin() && sameTenant());
+    }
+
     match /workShifts/{shiftId} {
       allow read: if isPlatformAdmin() || (isSignedIn() && sameTenant());
       allow create: if isPlatformAdmin()
