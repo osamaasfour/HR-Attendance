@@ -12,7 +12,6 @@ import {
   getAuth,
   initializeAuth,
   getReactNativePersistence,
-  GoogleAuthProvider,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   signOut,
@@ -45,6 +44,7 @@ import {
   Timestamp,
   GeoPoint,
   enableIndexedDbPersistence,
+  deleteField,
   type DocumentData,
   type QueryDocumentSnapshot,
 } from 'firebase/firestore';
@@ -104,8 +104,6 @@ function createAuth(): Auth {
 }
 
 export const auth = createAuth();
-
-export const googleProvider = new GoogleAuthProvider();
 
 /* ------------------------------------------------------------------ */
 /*  Storage Instance                                                    */
@@ -182,6 +180,7 @@ export {
   onSnapshot,
   Timestamp,
   GeoPoint,
+  deleteField,
   getStorage,
   ref,
   uploadBytes,

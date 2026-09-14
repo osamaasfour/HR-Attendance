@@ -11,7 +11,7 @@ import {
   TouchableOpacity,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { db, collection, getDocs, query, where } from '../../services/firebase';
+import { getDocs, where } from '../../services/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { useCompany } from '../../context/CompanyContext';
@@ -20,6 +20,7 @@ import DateField from '../../components/DateField';
 import { formatTime, formatDuration, toDateString, resolveAttendanceTimezone } from '../../utils/time';
 import { toCsv, downloadCsv } from '../../utils/csv';
 import type { AttendanceRecord } from '../../types';
+import { tenantQuery } from '../../utils/tenantScope';
 import type { TranslationKey } from '../../i18n/translations';
 import { colors } from '../../constants/colors';
 
@@ -171,15 +172,15 @@ export default function AdminAllRecordsScreen() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const attQuery = query(
-        collection(db, 'attendance'),
+      const attQuery = tenantQuery(
+        'attendance',
+        tid,
         where('date', '>=', from),
         where('date', '<=', to),
       );
       const snap = await getDocs(attQuery);
       const rows = snap.docs
         .map((d) => ({ ...(d.data() as AttendanceRecord), id: d.id }))
-        .filter((a) => (a.tenantId || 'default') === tid || !a.tenantId)
         .sort((a, b) => {
           const byDate = (b.date || '').localeCompare(a.date || '');
           if (byDate !== 0) return byDate;

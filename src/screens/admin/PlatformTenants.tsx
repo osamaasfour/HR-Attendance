@@ -18,13 +18,15 @@ import { useAuth } from '../../context/AuthContext';
 import { useAppAlert } from '../../context/AlertContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { adminCreateEmployee } from '../../utils/adminCreateEmployee';
+import { adminUpdateUserAuthCredentials } from '../../utils/adminUpdateAuth';
 import {
-  countTenantUsers,
   createTenant,
   deleteTenant,
+  getTenantSeatAndAdmin,
   listTenants,
   normalizeSlug,
   updateTenant,
+  type TenantAdminAccount,
 } from '../../utils/tenants';
 import { cloneTenantSettings } from '../../utils/provisionTenant';
 import {
@@ -38,16 +40,18 @@ import { DEFAULT_TENANT_ID, type Tenant } from '../../types';
 const LICENSE_TERMS: LicenseTerm[] = ['monthly', 'quarterly', 'annual', 'trial'];
 
 export default function PlatformTenantsScreen() {
-  const { user } = useAuth();
+  const { user, resetPassword } = useAuth();
   const { showAlert } = useAppAlert();
   const { t } = useLanguage();
 
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [seatCounts, setSeatCounts] = useState<Record<string, number>>({});
+  const [adminByTenant, setAdminByTenant] = useState<Record<string, TenantAdminAccount>>({});
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<Tenant | null>(null);
+  const [resettingId, setResettingId] = useState<string | null>(null);
 
   const [companyName, setCompanyName] = useState('');
   const [plan, setPlan] = useState<'free' | 'pro' | 'enterprise'>('pro');
@@ -70,6 +74,8 @@ export default function PlatformTenantsScreen() {
   const [editNotes, setEditNotes] = useState('');
   const [editContractRef, setEditContractRef] = useState('');
   const [editActive, setEditActive] = useState(true);
+  const [editNewPassword, setEditNewPassword] = useState('');
+  const [editConfirmPassword, setEditConfirmPassword] = useState('');
 
   const isPlatform = user?.platformAdmin === true;
 
@@ -95,12 +101,39 @@ export default function PlatformTenantsScreen() {
       const rows = await listTenants();
       setTenants(rows);
       const counts: Record<string, number> = {};
+      const admins: Record<string, TenantAdminAccount> = {};
       await Promise.all(
         rows.map(async (tn) => {
-          counts[tn.id] = await countTenantUsers(tn.id);
+          try {
+            const summary = await getTenantSeatAndAdmin(tn.id, tn.adminEmail);
+            counts[tn.id] = summary.seats;
+            const admin =
+              summary.admin ||
+              (tn.adminEmail
+                ? { uid: tn.adminUid || '', email: tn.adminEmail.trim().toLowerCase() }
+                : null);
+            if (admin?.email) {
+              admins[tn.id] = admin;
+              if ((!tn.adminEmail || !tn.adminUid) && summary.admin) {
+                await updateTenant(tn.id, {
+                  adminEmail: summary.admin.email,
+                  adminUid: summary.admin.uid,
+                }).catch(() => undefined);
+              }
+            }
+          } catch {
+            counts[tn.id] = 0;
+            if (tn.adminEmail) {
+              admins[tn.id] = {
+                uid: tn.adminUid || '',
+                email: tn.adminEmail.trim().toLowerCase(),
+              };
+            }
+          }
         }),
       );
       setSeatCounts(counts);
+      setAdminByTenant(admins);
     } catch (e: any) {
       showAlert(t('error'), e?.message || t('actionFailed'));
     } finally {
@@ -148,6 +181,8 @@ export default function PlatformTenantsScreen() {
     setEditNotes(tn.licenseNotes || '');
     setEditContractRef(tn.licenseKey || '');
     setEditActive(tn.active !== false);
+    setEditNewPassword('');
+    setEditConfirmPassword('');
   };
 
   const saveEdit = async () => {
@@ -206,6 +241,82 @@ export default function PlatformTenantsScreen() {
     ]);
   };
 
+  const sendTenantReset = (tn: Tenant, email?: string) => {
+    const target = (email || adminByTenant[tn.id]?.email || tn.adminEmail || '').trim().toLowerCase();
+    if (!target) {
+      showAlert(t('missing'), t('noTenantAdminFound'));
+      return;
+    }
+    showAlert(t('resetPasswordTitle'), t('confirmResetTenantPassword', { email: target }), [
+      { text: t('cancel'), style: 'cancel' },
+      {
+        text: t('sendTenantPasswordReset'),
+        onPress: () => {
+          void (async () => {
+            setResettingId(tn.id);
+            try {
+              await resetPassword(target);
+              showAlert(t('resetPasswordTitle'), t('resetSent'));
+            } catch (e: any) {
+              showAlert(t('error'), e?.message || t('actionFailed'));
+            } finally {
+              setResettingId(null);
+            }
+          })();
+        },
+      },
+    ]);
+  };
+
+  const applyTenantPassword = async () => {
+    if (!editing) return;
+    const admin = adminByTenant[editing.id];
+    const email = (admin?.email || editing.adminEmail || '').trim().toLowerCase();
+    const uid = admin?.uid || editing.adminUid || '';
+    if (!email) {
+      showAlert(t('missing'), t('noTenantAdminFound'));
+      return;
+    }
+    if (editNewPassword.length < 6) {
+      showAlert(t('weakPassword'), t('passwordTooShort'));
+      return;
+    }
+    if (editNewPassword !== editConfirmPassword) {
+      showAlert(t('passwordMismatchTitle'), t('passwordsMismatch'));
+      return;
+    }
+    setSaving(true);
+    try {
+      if (uid) {
+        const result = await adminUpdateUserAuthCredentials({
+          targetUid: uid,
+          currentEmail: email,
+          nextEmail: email,
+          nextPassword: editNewPassword,
+        });
+        setEditNewPassword('');
+        setEditConfirmPassword('');
+        if (result.authUpdated) {
+          showAlert(t('success'), t('tenantPasswordUpdated'));
+        } else {
+          showAlert(
+            t('resetPasswordTitle'),
+            t('tenantPasswordSetPartial', { email }),
+          );
+        }
+      } else {
+        await resetPassword(email);
+        setEditNewPassword('');
+        setEditConfirmPassword('');
+        showAlert(t('resetPasswordTitle'), t('resetSent'));
+      }
+    } catch (e: any) {
+      showAlert(t('error'), e?.message || t('actionFailed'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const provision = async () => {
     if (!user) return;
     if (!companyName.trim()) {
@@ -217,6 +328,7 @@ export default function PlatformTenantsScreen() {
       return;
     }
     setSaving(true);
+    let createdTenantId: string | null = null;
     try {
       const expires = computedExpiry;
       const tenant = await createTenant({
@@ -231,7 +343,9 @@ export default function PlatformTenantsScreen() {
         licenseKey: contractRef.trim() || undefined,
         licenseNotes: licenseNotes.trim() || undefined,
         active: true,
+        adminEmail: adminEmail.trim().toLowerCase(),
       });
+      createdTenantId = tenant.id;
 
       let cloneMsg = '';
       if (cloneFromTemplate) {
@@ -249,7 +363,7 @@ export default function PlatformTenantsScreen() {
         });
       }
 
-      await adminCreateEmployee({
+      const createdAdmin = await adminCreateEmployee({
         email: adminEmail.trim().toLowerCase(),
         password: adminPassword,
         fullName: adminFullName.trim(),
@@ -257,6 +371,11 @@ export default function PlatformTenantsScreen() {
         role: 'admin',
         tenantId: tenant.id,
       });
+      await updateTenant(tenant.id, {
+        adminEmail: createdAdmin.email,
+        adminUid: createdAdmin.uid,
+      });
+      createdTenantId = null;
       setCreating(false);
       resetCreate();
       await load();
@@ -267,7 +386,19 @@ export default function PlatformTenantsScreen() {
         }`,
       );
     } catch (e: any) {
-      showAlert(t('error'), e?.message || t('actionFailed'));
+      if (createdTenantId && createdTenantId !== DEFAULT_TENANT_ID) {
+        await deleteTenant(createdTenantId).catch(() => undefined);
+      }
+      const code = String(e?.code || '');
+      const raw = String(e?.message || '');
+      let message = raw || t('actionFailed');
+      if (code.includes('email-already-in-use') || /email-already-in-use/i.test(raw)) {
+        message = t('tenantAdminEmailInUse');
+      } else if (code.includes('weak-password') || /weak-password/i.test(raw)) {
+        message = t('passwordTooShort');
+      }
+      showAlert(t('error'), message);
+      await load();
     } finally {
       setSaving(false);
     }
@@ -596,6 +727,57 @@ export default function PlatformTenantsScreen() {
             onChangeText={setEditNotes}
           />
 
+          <View className="border border-surface-100 bg-surface-50 rounded-xl p-3 mb-3">
+            <Text className="text-xs font-semibold text-surface-700 mb-1">
+              {t('tenantAdminEmail')}
+            </Text>
+            <Text className="text-sm text-surface-800 mb-2">
+              {adminByTenant[editing.id]?.email || editing.adminEmail || t('noTenantAdminFound')}
+            </Text>
+            <TouchableOpacity
+              onPress={() => sendTenantReset(editing)}
+              disabled={saving || resettingId === editing.id}
+              className="bg-white border border-primary-200 rounded-xl h-10 items-center justify-center mb-3"
+            >
+              {resettingId === editing.id ? (
+                <ActivityIndicator color="#0F766E" />
+              ) : (
+                <Text className="text-primary-700 text-xs font-semibold">
+                  {t('sendTenantPasswordReset')}
+                </Text>
+              )}
+            </TouchableOpacity>
+            <Text className="text-xs text-surface-400 mb-1">{t('setTenantAdminPassword')}</Text>
+            <TextInput
+              className="border border-surface-200 bg-white rounded-xl px-3 h-11 mb-2"
+              value={editNewPassword}
+              onChangeText={setEditNewPassword}
+              placeholder={t('newPasswordOptional')}
+              secureTextEntry
+            />
+            <TextInput
+              className="border border-surface-200 bg-white rounded-xl px-3 h-11 mb-1"
+              value={editConfirmPassword}
+              onChangeText={setEditConfirmPassword}
+              placeholder={t('confirmNewPassword')}
+              secureTextEntry
+            />
+            <Text className="text-[11px] text-surface-500 mb-2">{t('tenantAdminPasswordHint')}</Text>
+            <TouchableOpacity
+              onPress={applyTenantPassword}
+              disabled={saving}
+              className="bg-primary-500 rounded-xl h-10 items-center justify-center"
+            >
+              {saving ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text className="text-white text-xs font-semibold">
+                  {t('applyTenantAdminPassword')}
+                </Text>
+              )}
+            </TouchableOpacity>
+          </View>
+
           <View className="flex-row mb-2">
             <TouchableOpacity
               onPress={() => setEditing(null)}
@@ -635,6 +817,9 @@ export default function PlatformTenantsScreen() {
         {tenants.map((tn) => {
           const lic = checkTenantLicense(tn);
           const seats = seatCounts[tn.id] ?? 0;
+          const admin = adminByTenant[tn.id];
+          const adminEmailLabel =
+            admin?.email || tn.adminEmail || t('noTenantAdminFound');
           const max = tn.maxUsers && tn.maxUsers > 0 ? tn.maxUsers : null;
           const badge =
             lic.state === 'ok'
@@ -659,35 +844,55 @@ export default function PlatformTenantsScreen() {
                 : 'text-accent-700'
               : 'text-danger-600';
           return (
-            <TouchableOpacity
+            <View
               key={tn.id}
-              onPress={() => openEdit(tn)}
               className="bg-white rounded-xl p-4 mb-2 border border-surface-100"
             >
-              <View className="flex-row justify-between items-start">
-                <View className="flex-1 pr-2">
-                  <Text className="font-semibold text-surface-800">{tn.name}</Text>
-                  <Text className="text-surface-500 text-xs mt-0.5">
-                    {t('tenantSlug')}: {tn.slug}
-                  </Text>
-                  <Text className="text-surface-400 text-[11px] mt-1">
-                    {t('tenantPlan')}: {tn.plan || 'free'}
-                    {tn.licenseTerm ? ` · ${termLabel(tn.licenseTerm)}` : ''} ·{' '}
-                    {t('seatsUsed', {
-                      used: seats,
-                      max: max ?? t('unlimited'),
-                    })}
-                  </Text>
-                  <Text className="text-surface-400 text-[11px]">
-                    {t('licenseExpiresAt')}: {formatLicenseExpiry(tn)}
-                    {lic.daysLeft != null ? ` · ${t('daysLeft', { days: lic.daysLeft })}` : ''}
-                  </Text>
+              <TouchableOpacity onPress={() => openEdit(tn)}>
+                <View className="flex-row justify-between items-start">
+                  <View className="flex-1 pr-2">
+                    <Text className="font-semibold text-surface-800">{tn.name}</Text>
+                    <Text className="text-surface-500 text-xs mt-0.5">
+                      {t('tenantSlug')}: {tn.slug}
+                    </Text>
+                    <View className="flex-row items-center mt-1">
+                      <MaterialCommunityIcons name="email-outline" size={14} color="#475569" />
+                      <Text className="text-surface-600 text-xs ml-1 flex-1">
+                        {t('tenantAdminEmail')}: {adminEmailLabel}
+                      </Text>
+                    </View>
+                    <Text className="text-surface-500 text-[11px] mt-1">
+                      {t('tenantPlan')}: {tn.plan || 'free'}
+                      {tn.licenseTerm ? ` · ${termLabel(tn.licenseTerm)}` : ''} ·{' '}
+                      {t('seatsUsed', {
+                        used: seats,
+                        max: max ?? t('unlimited'),
+                      })}
+                    </Text>
+                    <Text className="text-surface-500 text-[11px]">
+                      {t('licenseExpiresAt')}: {formatLicenseExpiry(tn)}
+                      {lic.daysLeft != null ? ` · ${t('daysLeft', { days: lic.daysLeft })}` : ''}
+                    </Text>
+                  </View>
+                  <View className={`px-2 py-1 rounded-lg ${badgeBg}`}>
+                    <Text className={`text-[10px] font-bold ${badgeText}`}>{badge}</Text>
+                  </View>
                 </View>
-                <View className={`px-2 py-1 rounded-lg ${badgeBg}`}>
-                  <Text className={`text-[10px] font-bold ${badgeText}`}>{badge}</Text>
-                </View>
-              </View>
-            </TouchableOpacity>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => sendTenantReset(tn)}
+                disabled={(!admin?.email && !tn.adminEmail) || resettingId === tn.id}
+                className="mt-3 bg-primary-50 border border-primary-100 rounded-lg h-9 items-center justify-center"
+              >
+                {resettingId === tn.id ? (
+                  <ActivityIndicator color="#0F766E" />
+                ) : (
+                  <Text className="text-primary-700 text-xs font-semibold">
+                    {t('sendTenantPasswordReset')}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </View>
           );
         })}
       </View>

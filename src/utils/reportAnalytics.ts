@@ -91,7 +91,7 @@ export function buildDailyAttendanceSeries(opts: {
   holidayDates?: Set<string>;
 }): DailyAttendancePoint[] {
   const workforce = opts.userIds.size;
-  const off = opts.weeklyOffDays || [];
+  const off = Array.isArray(opts.weeklyOffDays) ? opts.weeklyOffDays : [];
   const holidays = opts.holidayDates;
   const byDate = new Map<string, AttendanceRecord[]>();
   opts.attendance.forEach((r) => {
@@ -134,7 +134,7 @@ export function buildWeekAttendanceBars(opts: {
   locale?: string;
 }): DailyAttendancePoint[] {
   const workforce = opts.userIds.size;
-  const off = opts.weeklyOffDays || [];
+  const off = Array.isArray(opts.weeklyOffDays) ? opts.weeklyOffDays : [];
   return opts.dates.map((date) => {
     const recs = opts.attendance.filter((r) => r.date === date && opts.userIds.has(r.userId));
     const punched = new Set(recs.filter((r) => r.clockIn).map((r) => r.userId));

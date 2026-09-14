@@ -1,5 +1,6 @@
 /**
  * Organization chart — Company → Branches → Departments → Employees
+ * Tenant admins can add / edit / delete branches & departments for their company.
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
@@ -11,12 +12,15 @@ import {
   ScrollView,
   RefreshControl,
   Image,
+  ActivityIndicator,
 } from 'react-native';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import {
   db,
   collection,
-  getDocs,
   addDoc,
+  doc,
+  updateDoc,
   Timestamp,
 } from '../../services/firebase';
 import { useAuth } from '../../context/AuthContext';
@@ -24,6 +28,8 @@ import { useAppAlert } from '../../context/AlertContext';
 import { useCompany } from '../../context/CompanyContext';
 import { useLanguage } from '../../context/LanguageContext';
 import type { Branch, Department, UserData } from '../../types';
+import { loadTenantRecords } from '../../utils/tenantScope';
+import { colors } from '../../constants/colors';
 
 type EmpNode = UserData;
 type DeptNode = Department & { employees: EmpNode[] };
@@ -44,6 +50,7 @@ export default function OrgChartScreen() {
   const [departments, setDepartments] = useState<Department[]>([]);
   const [users, setUsers] = useState<UserData[]>([]);
   const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
   const [expanded, setExpanded] = useState<Set<string>>(new Set(['company']));
 
@@ -51,6 +58,12 @@ export default function OrgChartScreen() {
   const [newDeptName, setNewDeptName] = useState('');
   const [newDeptBranchId, setNewDeptBranchId] = useState('');
   const [editCompany, setEditCompany] = useState(company.name);
+
+  const [editingBranch, setEditingBranch] = useState<Branch | null>(null);
+  const [editBranchName, setEditBranchName] = useState('');
+  const [editingDept, setEditingDept] = useState<Department | null>(null);
+  const [editDeptName, setEditDeptName] = useState('');
+  const [editDeptBranchId, setEditDeptBranchId] = useState('');
 
   useEffect(() => {
     setCompanyName(company.name);
@@ -61,37 +74,24 @@ export default function OrgChartScreen() {
     setLoading(true);
     try {
       await refreshCompany();
-      const [branchSnap, deptSnap, userSnap] = await Promise.all([
-        getDocs(collection(db, 'branches')),
-        getDocs(collection(db, 'departments')),
-        getDocs(collection(db, 'users')),
+      const [branchListRaw, deptListRaw, userListRaw] = await Promise.all([
+        loadTenantRecords<Branch>('branches', tenantId),
+        loadTenantRecords<Department>('departments', tenantId),
+        loadTenantRecords<UserData>('users', tenantId, 'uid'),
       ]);
 
-      const branchList = branchSnap.docs
-        .map((d) => ({ ...(d.data() as Branch), id: d.id }))
-        .filter(
-          (b) =>
-            b.active !== false &&
-            ((b as any).tenantId || 'default') === tenantId,
-        )
+      const branchList = branchListRaw
+        .filter((b) => b.active !== false)
         .sort((a, b) => a.name.localeCompare(b.name));
       setBranches(branchList);
 
-      const deptList = deptSnap.docs
-        .map((d) => ({ ...(d.data() as Department), id: d.id }))
-        .filter(
-          (d) =>
-            d.active !== false &&
-            ((d as any).tenantId || 'default') === tenantId,
-        )
+      const deptList = deptListRaw
+        .filter((d) => d.active !== false)
         .sort((a, b) => a.name.localeCompare(b.name));
       setDepartments(deptList);
 
-      const userList = userSnap.docs
-        .map((d) => ({ ...(d.data() as UserData), uid: d.id }))
-        .filter(
-          (u) => u.active !== false && (u.tenantId || 'default') === tenantId,
-        )
+      const userList = userListRaw
+        .filter((u) => u.active !== false)
         .sort((a, b) => a.fullName.localeCompare(b.fullName));
       setUsers(userList);
 
@@ -147,15 +147,23 @@ export default function OrgChartScreen() {
   const addBranch = async () => {
     const name = newBranch.trim();
     if (!name) return;
-    await addDoc(collection(db, 'branches'), {
-      name,
-      companyId: COMPANY_DOC,
-      tenantId: user?.tenantId || 'default',
-      active: true,
-      createdAt: Timestamp.now(),
-    });
-    setNewBranch('');
-    await load();
+    setSaving(true);
+    try {
+      await addDoc(collection(db, 'branches'), {
+        name,
+        companyId: COMPANY_DOC,
+        tenantId,
+        active: true,
+        createdAt: Timestamp.now(),
+        updatedAt: Timestamp.now(),
+      });
+      setNewBranch('');
+      await load();
+    } catch (e: any) {
+      showAlert(t('error'), e?.message || t('actionFailed'));
+    } finally {
+      setSaving(false);
+    }
   };
 
   const addDepartment = async () => {
@@ -164,15 +172,154 @@ export default function OrgChartScreen() {
       showAlert(t('missing'), t('selectBranch'));
       return;
     }
-    await addDoc(collection(db, 'departments'), {
-      name,
-      branchId: newDeptBranchId,
-      tenantId: user?.tenantId || 'default',
-      active: true,
-      createdAt: Timestamp.now(),
-    });
-    setNewDeptName('');
-    await load();
+    setSaving(true);
+    try {
+      await addDoc(collection(db, 'departments'), {
+        name,
+        branchId: newDeptBranchId,
+        tenantId,
+        active: true,
+        createdAt: Timestamp.now(),
+        updatedAt: Timestamp.now(),
+      });
+      setNewDeptName('');
+      await load();
+    } catch (e: any) {
+      showAlert(t('error'), e?.message || t('actionFailed'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const openEditBranch = (branch: Branch) => {
+    setEditingDept(null);
+    setEditingBranch(branch);
+    setEditBranchName(branch.name);
+  };
+
+  const openEditDept = (dept: Department) => {
+    setEditingBranch(null);
+    setEditingDept(dept);
+    setEditDeptName(dept.name);
+    setEditDeptBranchId(dept.branchId);
+  };
+
+  const saveBranchEdit = async () => {
+    if (!editingBranch) return;
+    const name = editBranchName.trim();
+    if (!name) {
+      showAlert(t('missing'), t('branchName'));
+      return;
+    }
+    setSaving(true);
+    try {
+      await updateDoc(doc(db, 'branches', editingBranch.id), {
+        name,
+        updatedAt: Timestamp.now(),
+      });
+      setEditingBranch(null);
+      setEditBranchName('');
+      await load();
+      showAlert(t('success'), t('branchSaved'));
+    } catch (e: any) {
+      showAlert(t('error'), e?.message || t('actionFailed'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveDeptEdit = async () => {
+    if (!editingDept) return;
+    const name = editDeptName.trim();
+    if (!name || !editDeptBranchId) {
+      showAlert(t('missing'), t('selectBranch'));
+      return;
+    }
+    setSaving(true);
+    try {
+      await updateDoc(doc(db, 'departments', editingDept.id), {
+        name,
+        branchId: editDeptBranchId,
+        updatedAt: Timestamp.now(),
+      });
+      setEditingDept(null);
+      setEditDeptName('');
+      setEditDeptBranchId('');
+      await load();
+      showAlert(t('success'), t('departmentSaved'));
+    } catch (e: any) {
+      showAlert(t('error'), e?.message || t('actionFailed'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const confirmDeleteBranch = (branch: Branch) => {
+    showAlert(t('deleteBranchTitle'), t('deleteBranchConfirm', { name: branch.name }), [
+      { text: t('cancel'), style: 'cancel' },
+      {
+        text: t('delete'),
+        style: 'destructive',
+        onPress: () => {
+          void (async () => {
+            setSaving(true);
+            try {
+              const childDepts = departments.filter((d) => d.branchId === branch.id);
+              await Promise.all([
+                updateDoc(doc(db, 'branches', branch.id), {
+                  active: false,
+                  updatedAt: Timestamp.now(),
+                }),
+                ...childDepts.map((d) =>
+                  updateDoc(doc(db, 'departments', d.id), {
+                    active: false,
+                    updatedAt: Timestamp.now(),
+                  }),
+                ),
+              ]);
+              if (editingBranch?.id === branch.id) setEditingBranch(null);
+              if (editingDept && childDepts.some((d) => d.id === editingDept.id)) {
+                setEditingDept(null);
+              }
+              await load();
+              showAlert(t('success'), t('branchDeleted'));
+            } catch (e: any) {
+              showAlert(t('error'), e?.message || t('actionFailed'));
+            } finally {
+              setSaving(false);
+            }
+          })();
+        },
+      },
+    ]);
+  };
+
+  const confirmDeleteDept = (dept: Department) => {
+    showAlert(t('deleteDepartmentTitle'), t('deleteDepartmentConfirm', { name: dept.name }), [
+      { text: t('cancel'), style: 'cancel' },
+      {
+        text: t('delete'),
+        style: 'destructive',
+        onPress: () => {
+          void (async () => {
+            setSaving(true);
+            try {
+              await updateDoc(doc(db, 'departments', dept.id), {
+                active: false,
+                updatedAt: Timestamp.now(),
+              });
+              if (editingDept?.id === dept.id) setEditingDept(null);
+              await load();
+              showAlert(t('success'), t('departmentDeleted'));
+            } catch (e: any) {
+              showAlert(t('error'), e?.message || t('actionFailed'));
+            } finally {
+              setSaving(false);
+            }
+          })();
+        },
+      },
+    ]);
   };
 
   const q = search.trim().toLowerCase();
@@ -231,6 +378,7 @@ export default function OrgChartScreen() {
               />
               <TouchableOpacity
                 onPress={addBranch}
+                disabled={saving}
                 className="bg-primary-500 px-4 rounded-xl justify-center"
               >
                 <Text className="text-white font-semibold text-sm">{t('add')}</Text>
@@ -266,11 +414,93 @@ export default function OrgChartScreen() {
               />
               <TouchableOpacity
                 onPress={addDepartment}
+                disabled={saving}
                 className="bg-primary-500 px-4 rounded-xl justify-center"
               >
                 <Text className="text-white font-semibold text-sm">{t('add')}</Text>
               </TouchableOpacity>
             </View>
+
+            {editingBranch && (
+              <View className="mt-4 pt-3 border-t border-surface-100">
+                <Text className="font-semibold text-surface-800 mb-2">{t('editBranch')}</Text>
+                <TextInput
+                  className="border border-surface-200 rounded-xl px-3 h-11 mb-2"
+                  value={editBranchName}
+                  onChangeText={setEditBranchName}
+                  placeholder={t('branchName')}
+                />
+                <View className="flex-row">
+                  <TouchableOpacity
+                    onPress={() => setEditingBranch(null)}
+                    className="flex-1 bg-surface-100 rounded-xl h-11 items-center justify-center mr-2"
+                  >
+                    <Text className="text-surface-600 font-semibold">{t('cancel')}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={saveBranchEdit}
+                    disabled={saving}
+                    className="flex-1 bg-primary-500 rounded-xl h-11 items-center justify-center"
+                  >
+                    {saving ? (
+                      <ActivityIndicator color="#fff" />
+                    ) : (
+                      <Text className="text-white font-semibold">{t('save')}</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+
+            {editingDept && (
+              <View className="mt-4 pt-3 border-t border-surface-100">
+                <Text className="font-semibold text-surface-800 mb-2">{t('editDepartment')}</Text>
+                <View className="flex-row flex-wrap mb-2">
+                  {branches.map((b) => (
+                    <TouchableOpacity
+                      key={b.id}
+                      onPress={() => setEditDeptBranchId(b.id)}
+                      className={`px-3 py-2 rounded-lg mr-2 mb-2 ${
+                        editDeptBranchId === b.id ? 'bg-primary-500' : 'bg-surface-100'
+                      }`}
+                    >
+                      <Text
+                        className={`text-xs font-semibold ${
+                          editDeptBranchId === b.id ? 'text-white' : 'text-surface-600'
+                        }`}
+                      >
+                        {b.name}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                <TextInput
+                  className="border border-surface-200 rounded-xl px-3 h-11 mb-2"
+                  value={editDeptName}
+                  onChangeText={setEditDeptName}
+                  placeholder={t('departmentName')}
+                />
+                <View className="flex-row">
+                  <TouchableOpacity
+                    onPress={() => setEditingDept(null)}
+                    className="flex-1 bg-surface-100 rounded-xl h-11 items-center justify-center mr-2"
+                  >
+                    <Text className="text-surface-600 font-semibold">{t('cancel')}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={saveDeptEdit}
+                    disabled={saving}
+                    className="flex-1 bg-primary-500 rounded-xl h-11 items-center justify-center"
+                  >
+                    {saving ? (
+                      <ActivityIndicator color="#fff" />
+                    ) : (
+                      <Text className="text-white font-semibold">{t('save')}</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
           </View>
         )}
 
@@ -322,19 +552,41 @@ export default function OrgChartScreen() {
               if (!branchMatch) return null;
               return (
                 <View key={branch.id}>
-                  <TouchableOpacity
-                    onPress={() => toggle(bKey)}
+                  <View
                     className="flex-row items-center bg-white border border-surface-100 rounded-xl mb-2 py-3 px-3"
                     style={{ marginLeft: 16 }}
                   >
-                    <Text className="text-surface-400 w-5 text-center">
-                      {expanded.has(bKey) ? '▾' : '▸'}
-                    </Text>
-                    <View className="flex-1 ml-2">
-                      <Text className="font-semibold text-surface-800">{branch.name}</Text>
-                      <Text className="text-surface-400 text-xs">{t('branch')}</Text>
-                    </View>
-                  </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => toggle(bKey)}
+                      className="flex-row items-center flex-1"
+                    >
+                      <Text className="text-surface-400 w-5 text-center">
+                        {expanded.has(bKey) ? '▾' : '▸'}
+                      </Text>
+                      <View className="flex-1 ml-2">
+                        <Text className="font-semibold text-surface-800">{branch.name}</Text>
+                        <Text className="text-surface-400 text-xs">{t('branch')}</Text>
+                      </View>
+                    </TouchableOpacity>
+                    {isAdmin && (
+                      <View className="flex-row items-center ml-1">
+                        <TouchableOpacity
+                          onPress={() => openEditBranch(branch)}
+                          className="p-2"
+                          accessibilityLabel={t('editBranch')}
+                        >
+                          <MaterialCommunityIcons name="pencil" size={18} color={colors.primary} />
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          onPress={() => confirmDeleteBranch(branch)}
+                          className="p-2"
+                          accessibilityLabel={t('delete')}
+                        >
+                          <MaterialCommunityIcons name="delete-outline" size={18} color={colors.danger} />
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                  </View>
 
                   {expanded.has(bKey) &&
                     branch.departments.map((dept) => {
@@ -346,21 +598,47 @@ export default function OrgChartScreen() {
                       if (!deptMatch) return null;
                       return (
                         <View key={dept.id}>
-                          <TouchableOpacity
-                            onPress={() => toggle(dKey)}
+                          <View
                             className="flex-row items-center bg-white border border-surface-100 rounded-xl mb-2 py-3 px-3"
                             style={{ marginLeft: 32 }}
                           >
-                            <Text className="text-surface-400 w-5 text-center">
-                              {expanded.has(dKey) ? '▾' : '▸'}
-                            </Text>
-                            <View className="flex-1 ml-2">
-                              <Text className="font-semibold text-surface-800">{dept.name}</Text>
-                              <Text className="text-surface-400 text-xs">
-                                {t('department')} · {t('peopleCount', { count: dept.employees.length })}
+                            <TouchableOpacity
+                              onPress={() => toggle(dKey)}
+                              className="flex-row items-center flex-1"
+                            >
+                              <Text className="text-surface-400 w-5 text-center">
+                                {expanded.has(dKey) ? '▾' : '▸'}
                               </Text>
-                            </View>
-                          </TouchableOpacity>
+                              <View className="flex-1 ml-2">
+                                <Text className="font-semibold text-surface-800">{dept.name}</Text>
+                                <Text className="text-surface-400 text-xs">
+                                  {t('department')} · {t('peopleCount', { count: dept.employees.length })}
+                                </Text>
+                              </View>
+                            </TouchableOpacity>
+                            {isAdmin && (
+                              <View className="flex-row items-center ml-1">
+                                <TouchableOpacity
+                                  onPress={() => openEditDept(dept)}
+                                  className="p-2"
+                                  accessibilityLabel={t('editDepartment')}
+                                >
+                                  <MaterialCommunityIcons name="pencil" size={18} color={colors.primary} />
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                  onPress={() => confirmDeleteDept(dept)}
+                                  className="p-2"
+                                  accessibilityLabel={t('delete')}
+                                >
+                                  <MaterialCommunityIcons
+                                    name="delete-outline"
+                                    size={18}
+                                    color={colors.danger}
+                                  />
+                                </TouchableOpacity>
+                              </View>
+                            )}
+                          </View>
 
                           {expanded.has(dKey) &&
                             dept.employees.filter(matchesUser).map((emp) => (

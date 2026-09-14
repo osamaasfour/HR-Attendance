@@ -18,6 +18,7 @@ import {
   ensureDefaultTenant,
   getTenantById,
   updateTenant,
+  upsertTenantInvite,
 } from '../utils/tenants';
 import { formatMoney } from '../utils/formatMoney';
 import { db, doc, updateDoc } from '../services/firebase';
@@ -56,13 +57,22 @@ export function CompanyProvider({ children }: { children: React.ReactNode }) {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      await ensureDefaultTenant();
-      const tid = user?.tenantId || DEFAULT_TENANT_ID;
+      if (!user) {
+        setTenant({ ...DEFAULT_TENANT });
+        return;
+      }
+      const tid = user.tenantId || DEFAULT_TENANT_ID;
+      if (tid === DEFAULT_TENANT_ID) {
+        try {
+          await ensureDefaultTenant();
+        } catch {
+          /* other workspaces cannot read tenants/default */
+        }
+      }
       let t = await getTenantById(tid);
-      if (!t) {
+      if (!t && tid === DEFAULT_TENANT_ID) {
         t = await ensureDefaultTenant();
       }
-      // Backfill missing tenantId on legacy user profiles
       if (user && !user.tenantId) {
         try {
           await updateDoc(doc(db, 'users', user.uid), { tenantId: DEFAULT_TENANT_ID });
@@ -70,7 +80,14 @@ export function CompanyProvider({ children }: { children: React.ReactNode }) {
           /* ignore */
         }
       }
+      if (!t) {
+        setTenant({ ...DEFAULT_TENANT });
+        return;
+      }
       setTenant(t);
+      if (user.role === 'admin' || user.platformAdmin) {
+        void upsertTenantInvite(t).catch(() => undefined);
+      }
     } catch (e) {
       console.warn('[Tenant] load failed', e);
       setTenant({ ...DEFAULT_TENANT });

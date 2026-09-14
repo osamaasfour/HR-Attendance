@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, FlatList, RefreshControl, TextInput, TouchableOpacity } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { db, collection, getDocs } from '../../services/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
+import { loadTenantRecords } from '../../utils/tenantScope';
 import type { UserData } from '../../types';
 
 export default function DirectoryScreen({ editable = false }: { editable?: boolean }) {
@@ -18,13 +18,8 @@ export default function DirectoryScreen({ editable = false }: { editable?: boole
   const load = async () => {
     setLoading(true);
     try {
-      const snap = await getDocs(collection(db, 'users'));
-      const rows = snap.docs.map((d) => ({ ...(d.data() as UserData), uid: d.id }));
-      setUsers(
-        rows.filter(
-          (u) => u.active !== false && (u.tenantId || 'default') === tenantId,
-        ),
-      );
+      const rows = await loadTenantRecords<UserData>('users', tenantId, 'uid');
+      setUsers(rows.filter((u) => u.active !== false));
     } finally {
       setLoading(false);
     }

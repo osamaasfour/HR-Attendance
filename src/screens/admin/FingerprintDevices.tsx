@@ -35,6 +35,7 @@ import { useLanguage } from '../../context/LanguageContext';
 import { useCompany } from '../../context/CompanyContext';
 import { DEFAULT_PUNCH_TIMEZONE } from '../../constants/timezones';
 import { ZKTECO_ADMS_URL, generateDeviceSecret } from '../../constants/zkteco';
+import { loadTenantRecords } from '../../utils/tenantScope';
 import type {
   FingerprintConnectionType,
   FingerprintDevice,
@@ -107,10 +108,10 @@ export default function FingerprintDevicesScreen() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [devSnap, locSnap, userSnap, logSnap] = await Promise.all([
-        getDocs(collection(db, 'fingerprintDevices')),
-        getDocs(collection(db, 'workLocations')),
-        getDocs(collection(db, 'users')),
+      const [devices, locations, employees, logSnap] = await Promise.all([
+        loadTenantRecords<FingerprintDevice>('fingerprintDevices', tenantId),
+        loadTenantRecords<WorkLocation>('workLocations', tenantId),
+        loadTenantRecords<UserData>('users', tenantId, 'uid'),
         getDocs(
           query(
             collection(db, 'fingerprintPunchLog'),
@@ -122,28 +123,18 @@ export default function FingerprintDevicesScreen() {
       ]);
 
       setDevices(
-        devSnap.docs
-          .map((d) => ({ ...(d.data() as FingerprintDevice), id: d.id }))
-          .filter((d) => (d.tenantId || 'default') === tenantId)
-          .sort((a, b) => a.name.localeCompare(b.name)),
+        devices.sort((a, b) => a.name.localeCompare(b.name)),
       );
 
       setLocations(
-        locSnap.docs
-          .map((d) => ({ ...(d.data() as WorkLocation), id: d.id }))
-          .filter((l) => (l.tenantId || 'default') === tenantId && l.active !== false)
+        locations
+          .filter((l) => l.active !== false)
           .sort((a, b) => a.name.localeCompare(b.name)),
       );
 
       setEmployees(
-        userSnap.docs
-          .map((d) => ({ uid: d.id, ...(d.data() as UserData) }))
-          .filter(
-            (u) =>
-              (u.tenantId || 'default') === tenantId &&
-              u.active !== false &&
-              u.role !== 'admin',
-          )
+        employees
+          .filter((u) => u.active !== false && u.role !== 'admin')
           .sort((a, b) => (a.employeeId || '').localeCompare(b.employeeId || '')),
       );
 
@@ -225,10 +216,21 @@ export default function FingerprintDevicesScreen() {
 
     setSaving(true);
     try {
-      const dupSnap = await getDocs(
-        query(collection(db, 'fingerprintDevices'), where('serialNumber', '==', sn)),
-      );
-      const duplicate = dupSnap.docs.find((d) => d.id !== editing?.id);
+      let duplicate = false;
+      try {
+        const dupSnap = await getDocs(
+          query(collection(db, 'fingerprintDevices'), where('serialNumber', '==', sn)),
+        );
+        duplicate = dupSnap.docs.some((d) => d.id !== editing?.id);
+      } catch (e: unknown) {
+        const code = typeof e === 'object' && e && 'code' in e ? String((e as { code?: string }).code) : '';
+        const msg = e instanceof Error ? e.message : String(e);
+        if (code.includes('permission-denied') || msg.includes('permission-denied')) {
+          duplicate = true;
+        } else {
+          throw e;
+        }
+      }
       if (duplicate) {
         showAlert(t('error'), t('fingerprintSerialTaken'));
         return;

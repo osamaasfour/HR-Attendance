@@ -23,7 +23,6 @@ import {
   doc,
   setDoc,
   addDoc,
-  query,
   where,
   Timestamp,
 } from '../../services/firebase';
@@ -65,6 +64,7 @@ import {
 } from '../../utils/bankTransferMap';
 import { payrollSettingsDocId } from '../../utils/sendEmail';
 import { fetchHolidays, holidayDateSet } from '../../utils/holidays';
+import { loadTenantDocs, loadTenantRecords, tenantQuery } from '../../utils/tenantScope';
 import { colors } from '../../constants/colors';
 
 function currentPeriod(): string {
@@ -215,34 +215,29 @@ export default function AdminPayrollScreen() {
           setSettings(mergePayrollSettings(legacy.data() as PayrollSettings));
         }
       }
-      const usersSnap = await getDocs(collection(db, 'users'));
+      const usersSnap = await loadTenantRecords<UserData>('users', tid, 'uid');
       setUsers(
-        usersSnap.docs
-          .map((d) => ({ ...(d.data() as UserData), uid: d.id }))
-          .filter(
-            (u) =>
-              u.active !== false &&
-              u.role !== 'admin' &&
-              (u.tenantId || 'default') === tid,
-          ),
+        usersSnap.filter((u) => u.active !== false && u.role !== 'admin'),
       );
-      const compSnap = await getDocs(collection(db, 'compensation'));
+      const compRows = await loadTenantDocs('compensation', tid);
       const compMap: Record<string, Compensation> = {};
-      compSnap.docs.forEach((d) => {
-        const data = d.data() as Compensation;
-        if ((data.tenantId || 'default') === tid || !data.tenantId) {
-          compMap[d.id] = { ...data, userId: data.userId || d.id };
-        }
+      compRows.forEach(({ id, data }) => {
+        const userId = (typeof data.userId === 'string' && data.userId) || id;
+        compMap[userId] = { ...(data as unknown as Compensation), userId };
       });
+      await Promise.all(
+        usersSnap.map(async (u) => {
+          if (compMap[u.uid]) return;
+          const legacy = await getDoc(doc(db, 'compensation', u.uid));
+          if (legacy.exists()) {
+            const data = legacy.data() as Compensation;
+            compMap[u.uid] = { ...data, userId: data.userId || u.uid };
+          }
+        }),
+      );
       setCompensations(compMap);
-      const slipSnap = await getDocs(
-        query(collection(db, 'payslips'), where('period', '==', period)),
-      );
-      setPayslips(
-        slipSnap.docs
-          .map((d) => ({ ...(d.data() as Payslip), id: d.id }))
-          .filter((p: any) => (p.tenantId || 'default') === tid),
-      );
+      const slipSnap = await getDocs(tenantQuery('payslips', tid, where('period', '==', period)));
+      setPayslips(slipSnap.docs.map((d) => ({ ...(d.data() as Payslip), id: d.id })));
     } catch (e) {
       console.error('[Payroll] load', e);
     } finally {
@@ -420,22 +415,37 @@ export default function AdminPayrollScreen() {
       const liveSettings = mergePayrollSettings(settings);
       const tid = tenantId;
 
-      const attSnap = await getDocs(collection(db, 'attendance'));
-      const allAtt = attSnap.docs.map((d) => ({
+      const [attRows, reqRows, loanRows, compRows, shiftRows] = await Promise.all([
+        getDocs(tenantQuery('attendance', tid, where('date', '>=', start), where('date', '<=', end))),
+        loadTenantRecords<HrRequest>('hrRequests', tid),
+        loadTenantRecords<Loan>('loans', tid),
+        loadTenantDocs('compensation', tid),
+        loadTenantRecords<WorkShift>('workShifts', tid),
+      ]);
+      const allAtt = attRows.docs.map((d) => ({
         ...(d.data() as AttendanceRecord),
         id: d.id,
       }));
-      const reqSnap = await getDocs(collection(db, 'hrRequests'));
-      const allReq = reqSnap.docs.map((d) => ({ ...(d.data() as HrRequest), id: d.id }));
-      const loanSnap = await getDocs(collection(db, 'loans'));
-      const allLoans = loanSnap.docs.map((d) => ({ ...(d.data() as Loan), id: d.id }));
-      const compSnap = await getDocs(collection(db, 'compensation'));
-      const comps = new Map(compSnap.docs.map((d) => [d.id, d.data() as Compensation]));
-      const shiftSnap = await getDocs(collection(db, 'workShifts'));
+      const allReq = reqRows;
+      const allLoans = loanRows;
+      const comps = new Map<string, Compensation>();
+      compRows.forEach(({ id, data }) => {
+        const userId = (typeof data.userId === 'string' && data.userId) || id;
+        comps.set(userId, { ...(data as unknown as Compensation), userId });
+      });
+      await Promise.all(
+        users.map(async (u) => {
+          if (comps.has(u.uid)) return;
+          const legacy = await getDoc(doc(db, 'compensation', u.uid));
+          if (legacy.exists()) {
+            const data = legacy.data() as Compensation;
+            comps.set(u.uid, { ...data, userId: data.userId || u.uid });
+          }
+        }),
+      );
       const shiftsById = new Map(
-        shiftSnap.docs
-          .map((d) => ({ ...(d.data() as WorkShift), id: d.id }))
-          .filter((s) => (s.tenantId || 'default') === tid && s.active !== false)
+        shiftRows
+          .filter((s) => s.active !== false)
           .map((s) => [s.id, s]),
       );
       const defaultOffDays = resolveWorkSchedule(tenant.workSchedule).weeklyOffDays;
@@ -459,7 +469,7 @@ export default function AdminPayrollScreen() {
       }
 
       const existing = await getDocs(
-        query(collection(db, 'payslips'), where('period', '==', period)),
+        tenantQuery('payslips', tid, where('period', '==', period)),
       );
 
       let count = 0;
@@ -517,7 +527,7 @@ export default function AdminPayrollScreen() {
         count += 1;
       }
 
-      await setDoc(doc(db, 'payrollRuns', period), {
+      await setDoc(doc(db, 'payrollRuns', tid === 'default' ? period : `${tid}_${period}`), {
         period,
         status: publish ? 'published' : 'draft',
         tenantId: tid,

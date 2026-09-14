@@ -293,7 +293,7 @@ export default function ProfileScreen() {
           </View>
         </TouchableOpacity>
 
-        <Text className="text-surface-300 text-xs text-center mt-6">{t('appName')} v1.1.0</Text>
+        <Text className="text-surface-500 text-xs text-center mt-6">{t('appName')} v1.1.0</Text>
       </View>
     </ScrollView>
   );

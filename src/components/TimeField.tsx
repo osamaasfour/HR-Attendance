@@ -99,7 +99,7 @@ export default function TimeField({
         activeOpacity={0.85}
         className="border border-surface-200 rounded-xl px-3 h-11 flex-row items-center justify-between bg-white"
       >
-        <Text className={`text-base ${value ? 'text-surface-800' : 'text-surface-300'}`}>
+        <Text className={`text-base ${value ? 'text-surface-800' : 'text-surface-500'}`}>
           {display}
         </Text>
         <MaterialCommunityIcons name="clock-outline" size={22} color="#64748B" />

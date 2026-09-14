@@ -17,7 +17,6 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import {
   db,
   collection,
-  getDocs,
   addDoc,
   updateDoc,
   doc,
@@ -29,6 +28,7 @@ import { useLanguage } from '../../context/LanguageContext';
 import { useCompany } from '../../context/CompanyContext';
 import { LOCATION_TIMEZONE_OPTIONS, DEFAULT_PUNCH_TIMEZONE } from '../../constants/timezones';
 import type { WorkLocation } from '../../types';
+import { loadTenantRecords } from '../../utils/tenantScope';
 
 const DEFAULT_RADIUS = 100;
 
@@ -55,10 +55,8 @@ export default function AdminWorkLocationsScreen() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const snap = await getDocs(collection(db, 'workLocations'));
-      const list = snap.docs
-        .map((d) => ({ ...(d.data() as WorkLocation), id: d.id }))
-        .filter((loc) => (loc.tenantId || 'default') === tenantId)
+      const list = (await loadTenantRecords<WorkLocation>('workLocations', tenantId))
+        .filter((l) => l.active !== false)
         .sort((a, b) => a.name.localeCompare(b.name));
       setLocations(list);
     } catch (e: any) {
@@ -169,6 +167,31 @@ export default function AdminWorkLocationsScreen() {
     } catch (e: any) {
       showAlert(t('error'), e?.message || t('actionFailed'));
     }
+  };
+
+  const confirmDelete = (loc: WorkLocation) => {
+    showAlert(t('deleteLocationTitle'), t('deleteLocationConfirm', { name: loc.name }), [
+      { text: t('cancel'), style: 'cancel' },
+      {
+        text: t('delete'),
+        style: 'destructive',
+        onPress: () => {
+          void (async () => {
+            try {
+              await updateDoc(doc(db, 'workLocations', loc.id), {
+                active: false,
+                updatedAt: Timestamp.now(),
+              });
+              if (editing?.id === loc.id) resetForm();
+              await load();
+              showAlert(t('success'), t('locationDeleted'));
+            } catch (e: any) {
+              showAlert(t('error'), e?.message || t('actionFailed'));
+            }
+          })();
+        },
+      },
+    ]);
   };
 
   const formOpen = creating || !!editing;
@@ -327,11 +350,17 @@ export default function AdminWorkLocationsScreen() {
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={() => setActive(item, item.active === false)}
-                className="bg-warning-50 px-3 py-2 rounded-lg mb-2"
+                className="bg-warning-50 px-3 py-2 rounded-lg mr-2 mb-2"
               >
                 <Text className="text-warning-600 text-xs font-semibold">
                   {item.active === false ? t('activate') : t('deactivate')}
                 </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => confirmDelete(item)}
+                className="bg-danger-50 px-3 py-2 rounded-lg mb-2"
+              >
+                <Text className="text-danger-600 text-xs font-semibold">{t('delete')}</Text>
               </TouchableOpacity>
             </View>
           </View>

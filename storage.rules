@@ -5,10 +5,15 @@ service firebase.storage {
       return request.auth != null;
     }
 
+    function callerIsAdmin() {
+      return isSignedIn()
+        && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
     match /hrAttachments/{userId}/{fileName} {
       allow read: if isSignedIn();
       allow write: if isSignedIn()
-        && request.auth.uid == userId
+        && (request.auth.uid == userId || callerIsAdmin())
         && request.resource.size < 10 * 1024 * 1024
         && (
           request.resource.contentType.matches('image/.*')
@@ -16,12 +21,25 @@ service firebase.storage {
         );
     }
 
+    match /userDocuments/{userId}/{fileName} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn()
+        && (request.auth.uid == userId || callerIsAdmin())
+        && request.resource.size < 10 * 1024 * 1024
+        && (
+          request.resource.contentType.matches('image/.*')
+          || request.resource.contentType == 'application/pdf'
+        );
+      allow delete: if isSignedIn()
+        && (request.auth.uid == userId || callerIsAdmin());
+    }
+
     match /profilePhotos/{userId}/{fileName} {
       allow read: if isSignedIn();
       allow write: if isSignedIn()
         && (
           request.auth.uid == userId
-          || firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'admin'
+          || callerIsAdmin()
         )
         && request.resource.size < 5 * 1024 * 1024
         && request.resource.contentType.matches('image/.*');
@@ -29,8 +47,7 @@ service firebase.storage {
 
     match /company/{fileName} {
       allow read: if true;
-      allow write: if isSignedIn()
-        && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'admin'
+      allow write: if callerIsAdmin()
         && request.resource.size < 5 * 1024 * 1024
         && request.resource.contentType.matches('image/.*');
     }

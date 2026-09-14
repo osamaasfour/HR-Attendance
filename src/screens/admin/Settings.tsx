@@ -2,7 +2,7 @@
  * Admin Settings — Company branding (SaaS) + work schedule + shifts + EmailJS
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -23,7 +23,6 @@ import {
   getDoc,
   setDoc,
   collection,
-  getDocs,
   addDoc,
   updateDoc,
   Timestamp,
@@ -41,29 +40,23 @@ import {
   type WorkSchedule,
   type WorkShift,
 } from '../../types';
-import { sendTestEmail } from '../../utils/sendEmail';
+import {
+  emailSettingsDocId,
+  loadAdminEmailSettings,
+  publishEmailPublic,
+  sendTestEmail,
+} from '../../utils/sendEmail';
+import { isValidEmail, normalizeEmail } from '../../utils/email';
+import { parseWorkScheduleInput, toggleOffDay } from '../../utils/workScheduleForm';
+import { loadTenantDocs, resolveTenantId } from '../../utils/tenantScope';
 import { uploadCompanyLogo } from '../../utils/uploadCompanyLogo';
 import { COUNTRY_OPTIONS, CURRENCY_OPTIONS } from '../../utils/formatMoney';
-import { emailSettingsDocId } from '../../utils/sendEmail';
 import TimeField, { formatTime12h } from '../../components/TimeField';
+import { WeekdayPicker } from '../../components/WeekdayPicker';
 import HolidayManager from '../../components/HolidayManager';
 import { checkTenantLicense, formatLicenseExpiry } from '../../utils/tenantLicense';
 import { LicenseExpiryBanner } from '../../components/LicenseExpiryBanner';
 import { colors } from '../../constants/colors';
-
-const WEEKDAY_KEYS: { day: WeekdayNumber; labelKey: string }[] = [
-  { day: 0, labelKey: 'daySun' },
-  { day: 1, labelKey: 'dayMon' },
-  { day: 2, labelKey: 'dayTue' },
-  { day: 3, labelKey: 'dayWed' },
-  { day: 4, labelKey: 'dayThu' },
-  { day: 5, labelKey: 'dayFri' },
-  { day: 6, labelKey: 'daySat' },
-];
-
-function isValidHm(value: string): boolean {
-  return /^([01]\d|2[0-3]):[0-5]\d$/.test(value.trim());
-}
 
 export default function AdminSettingsScreen() {
   const { user } = useAuth();
@@ -72,7 +65,12 @@ export default function AdminSettingsScreen() {
   const { t, language } = useLanguage();
   const licenseCheck = checkTenantLicense(tenant);
 
-  const emailDoc = doc(db, 'payrollSettings', emailSettingsDocId(user?.tenantId || tenant.id));
+  const isAdmin = user?.role === 'admin' || user?.platformAdmin === true;
+  const tenantId = resolveTenantId(user?.tenantId, tenant.id);
+  const emailDocRef = useMemo(
+    () => doc(db, 'payrollSettings', emailSettingsDocId(tenantId)),
+    [tenantId],
+  );
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -122,6 +120,8 @@ export default function AdminSettingsScreen() {
   const [fromName, setFromName] = useState(DEFAULT_EMAIL_SETTINGS.fromName || '');
   const [testTo, setTestTo] = useState('');
 
+  const loadGen = useRef(0);
+
   const applySchedule = useCallback((schedule?: WorkSchedule | null) => {
     const s = resolveWorkSchedule(schedule);
     setWorkStart(s.workStart);
@@ -144,24 +144,22 @@ export default function AdminSettingsScreen() {
   }, [tenant.workSchedule, applySchedule]);
 
   const loadShifts = useCallback(async () => {
-    const tid = user?.tenantId || tenant.id || 'default';
-    const snap = await getDocs(collection(db, 'workShifts'));
-    const list = snap.docs
-      .map((d) => ({ ...(d.data() as WorkShift), id: d.id }))
-      .filter((s) => (s.tenantId || 'default') === tid && s.active !== false)
+    const rows = await loadTenantDocs('workShifts', tenantId);
+    const list = rows
+      .map((row) => ({ ...(row.data as unknown as WorkShift), id: row.id }))
+      .filter((s) => s.active !== false)
       .sort((a, b) => a.name.localeCompare(b.name));
     setShifts(list);
-  }, [user?.tenantId, tenant.id]);
+  }, [tenantId]);
 
   const load = useCallback(async () => {
+    const gen = ++loadGen.current;
     setLoading(true);
     try {
       await refreshCompany();
       await loadShifts();
-      const snap = await getDoc(emailDoc);
-      const data = snap.exists()
-        ? ({ ...DEFAULT_EMAIL_SETTINGS, ...(snap.data() as EmailSettings) })
-        : DEFAULT_EMAIL_SETTINGS;
+      const data = await loadAdminEmailSettings(tenantId);
+      if (gen !== loadGen.current) return;
       setEnabled(!!data.enabled);
       setPublicKey(data.publicKey || '');
       setServiceId(data.serviceId || '');
@@ -171,16 +169,21 @@ export default function AdminSettingsScreen() {
       setFromEmail(data.fromEmail || DEFAULT_EMAIL_SETTINGS.fromEmail);
       setFromName(data.fromName || '');
       setTestTo(user?.email || '');
-    } catch (e: any) {
-      showAlert(t('error'), e?.message || t('actionFailed'));
+      if (data.publicKey || data.serviceId || data.templateId || data.enabled) {
+        await publishEmailPublic(tenantId, data).catch(() => undefined);
+      }
+    } catch (e: unknown) {
+      if (gen !== loadGen.current) return;
+      const message = e instanceof Error ? e.message : t('actionFailed');
+      showAlert(t('error'), message);
     } finally {
-      setLoading(false);
+      if (gen === loadGen.current) setLoading(false);
     }
-  }, [refreshCompany, loadShifts, showAlert, t, user?.email]);
+  }, [refreshCompany, loadShifts, tenantId, showAlert, t, user?.email]);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    if (isAdmin) void load();
+  }, [isAdmin, load]);
 
   const buildPayload = (existingPrivate?: string): EmailSettings => {
     const savedPrivateKey = privateKey.trim() || existingPrivate;
@@ -188,11 +191,12 @@ export default function AdminSettingsScreen() {
     return {
       enabled,
       provider: 'emailjs',
+      tenantId,
       publicKey: publicKey.trim(),
       serviceId: serviceId.trim(),
       templateId: templateId.trim(),
       ...(savedPrivateKey ? { privateKey: savedPrivateKey } : {}),
-      fromEmail: fromEmail.trim().toLowerCase(),
+      fromEmail: normalizeEmail(fromEmail),
       ...(savedFromName ? { fromName: savedFromName } : {}),
       updatedAt: Timestamp.now(),
       ...(user?.uid ? { updatedBy: user.uid } : {}),
@@ -222,27 +226,11 @@ export default function AdminSettingsScreen() {
         updatedBy: user?.uid,
       });
       showAlert(t('success'), t('companySaved'));
-    } catch (e: any) {
-      showAlert(t('error'), e?.message || t('actionFailed'));
+    } catch (e: unknown) {
+      showAlert(t('error'), e instanceof Error ? e.message : t('actionFailed'));
     } finally {
       setSavingCompany(false);
     }
-  };
-
-  const toggleWorkingDay = (day: WeekdayNumber) => {
-    setWeeklyOffDays((prev) => {
-      const isOff = prev.includes(day);
-      if (isOff) return prev.filter((d) => d !== day);
-      return [...prev, day].sort((a, b) => a - b) as WeekdayNumber[];
-    });
-  };
-
-  const toggleShiftOffDay = (day: WeekdayNumber) => {
-    setShiftOffDays((prev) => {
-      const isOff = prev.includes(day);
-      if (isOff) return prev.filter((d) => d !== day);
-      return [...prev, day].sort((a, b) => a - b) as WeekdayNumber[];
-    });
   };
 
   const resetShiftForm = () => {
@@ -285,34 +273,20 @@ export default function AdminSettingsScreen() {
       showAlert(t('missing'), t('shiftName'));
       return;
     }
-    const start = shiftStart.trim();
-    const end = shiftEnd.trim();
-    if (!isValidHm(start) || !isValidHm(end)) {
-      showAlert(t('error'), t('invalidWorkTime'));
+    const parsed = parseWorkScheduleInput({
+      workStart: shiftStart,
+      workEnd: shiftEnd,
+      fullDayHours: shiftFullDay,
+      lateGraceMinutes: shiftGrace,
+      weeklyOffDays: shiftOffDays,
+    });
+    if (!parsed.ok) {
+      showAlert(t('error'), t(parsed.error));
       return;
     }
-    const hours = Number(shiftFullDay);
-    const grace = Number(shiftGrace);
-    if (!Number.isFinite(hours) || hours <= 0 || hours > 24) {
-      showAlert(t('error'), t('fullDayHours'));
-      return;
-    }
-    if (!Number.isFinite(grace) || grace < 0 || grace > 180) {
-      showAlert(t('error'), t('lateGraceMinutes'));
-      return;
-    }
-    if (shiftOffDays.length >= 7) {
-      showAlert(t('error'), t('needOneWorkingDay'));
-      return;
-    }
-    const tid = user?.tenantId || tenant.id || 'default';
     const payload = {
       name,
-      workStart: start,
-      workEnd: end,
-      fullDayHours: Math.round(hours * 100) / 100,
-      lateGraceMinutes: Math.round(grace),
-      weeklyOffDays: [...shiftOffDays],
+      ...parsed.schedule,
       updatedAt: Timestamp.now(),
     };
     setSavingShift(true);
@@ -323,7 +297,7 @@ export default function AdminSettingsScreen() {
       } else {
         await addDoc(collection(db, 'workShifts'), {
           ...payload,
-          tenantId: tid,
+          tenantId,
           active: true,
           createdAt: Timestamp.now(),
         });
@@ -331,14 +305,14 @@ export default function AdminSettingsScreen() {
       }
       resetShiftForm();
       await loadShifts();
-    } catch (e: any) {
-      showAlert(t('error'), e?.message || t('actionFailed'));
+    } catch (e: unknown) {
+      showAlert(t('error'), e instanceof Error ? e.message : t('actionFailed'));
     } finally {
       setSavingShift(false);
     }
   };
 
-  const deactivateShift = async (shift: WorkShift) => {
+  const performDeactivateShift = async (shift: WorkShift) => {
     try {
       await updateDoc(doc(db, 'workShifts', shift.id), {
         active: false,
@@ -347,45 +321,42 @@ export default function AdminSettingsScreen() {
       if (editingShift?.id === shift.id) resetShiftForm();
       await loadShifts();
       showAlert(t('success'), t('shiftDeactivated'));
-    } catch (e: any) {
-      showAlert(t('error'), e?.message || t('actionFailed'));
+    } catch (e: unknown) {
+      showAlert(t('error'), e instanceof Error ? e.message : t('actionFailed'));
     }
   };
 
+  const deactivateShift = (shift: WorkShift) => {
+    showAlert(t('deactivateShiftTitle'), t('deactivateShiftConfirm', { name: shift.name }), [
+      { text: t('cancel'), style: 'cancel' },
+      {
+        text: t('deactivate'),
+        style: 'destructive',
+        onPress: () => {
+          void performDeactivateShift(shift);
+        },
+      },
+    ]);
+  };
+
   const saveWorkSchedule = async () => {
-    const start = workStart.trim();
-    const end = workEnd.trim();
-    if (!isValidHm(start) || !isValidHm(end)) {
-      showAlert(t('error'), t('invalidWorkTime'));
+    const parsed = parseWorkScheduleInput({
+      workStart,
+      workEnd,
+      fullDayHours,
+      lateGraceMinutes: lateGrace,
+      weeklyOffDays,
+    });
+    if (!parsed.ok) {
+      showAlert(t('error'), t(parsed.error));
       return;
     }
-    const hours = Number(fullDayHours);
-    const grace = Number(lateGrace);
-    if (!Number.isFinite(hours) || hours <= 0 || hours > 24) {
-      showAlert(t('error'), t('fullDayHours'));
-      return;
-    }
-    if (!Number.isFinite(grace) || grace < 0 || grace > 180) {
-      showAlert(t('error'), t('lateGraceMinutes'));
-      return;
-    }
-    if (weeklyOffDays.length >= 7) {
-      showAlert(t('error'), t('needOneWorkingDay'));
-      return;
-    }
-    const schedule: WorkSchedule = {
-      workStart: start,
-      workEnd: end,
-      fullDayHours: Math.round(hours * 100) / 100,
-      lateGraceMinutes: Math.round(grace),
-      weeklyOffDays: [...weeklyOffDays],
-    };
     setSavingSchedule(true);
     try {
-      await saveCompany({ workSchedule: schedule, updatedBy: user?.uid });
+      await saveCompany({ workSchedule: parsed.schedule, updatedBy: user?.uid });
       showAlert(t('success'), t('workScheduleSaved'));
-    } catch (e: any) {
-      showAlert(t('error'), e?.message || t('actionFailed'));
+    } catch (e: unknown) {
+      showAlert(t('error'), e instanceof Error ? e.message : t('actionFailed'));
     } finally {
       setSavingSchedule(false);
     }
@@ -410,8 +381,8 @@ export default function AdminSettingsScreen() {
       const logoUrl = await uploadCompanyLogo(asset.uri, asset.mimeType);
       await saveCompany({ logoUrl, updatedBy: user?.uid });
       showAlert(t('success'), t('logoUpdated'));
-    } catch (e: any) {
-      showAlert(t('error'), e?.message || t('actionFailed'));
+    } catch (e: unknown) {
+      showAlert(t('error'), e instanceof Error ? e.message : t('actionFailed'));
     } finally {
       setUploadingLogo(false);
     }
@@ -423,7 +394,7 @@ export default function AdminSettingsScreen() {
         showAlert(t('missing'), t('emailjsTitle'));
         return;
       }
-      if (!fromEmail.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(fromEmail.trim())) {
+      if (!isValidEmail(fromEmail)) {
         showAlert(t('error'), t('invalidEmail'));
         return;
       }
@@ -431,43 +402,53 @@ export default function AdminSettingsScreen() {
 
     setSaving(true);
     try {
-      const existing = await getDoc(emailDoc);
+      const existing = await getDoc(emailDocRef);
       const prev = existing.exists() ? (existing.data() as EmailSettings) : null;
       const payload = buildPayload(prev?.privateKey);
-      await setDoc(emailDoc, payload, { merge: true });
+      await setDoc(emailDocRef, payload, { merge: true });
+      await publishEmailPublic(tenantId, payload);
       setHasPrivateKey(!!payload.privateKey);
       setPrivateKey('');
       showAlert(t('success'), t('emailSettingsSaved'));
-    } catch (e: any) {
-      showAlert(t('error'), e?.message || t('actionFailed'));
+    } catch (e: unknown) {
+      showAlert(t('error'), e instanceof Error ? e.message : t('actionFailed'));
     } finally {
       setSaving(false);
     }
   };
 
   const sendTest = async () => {
-    const to = (testTo || user?.email || '').trim();
-    if (!to) {
+    const to = normalizeEmail(testTo || user?.email || '');
+    if (!isValidEmail(to)) {
       showAlert(t('missing'), t('recipient'));
       return;
     }
     setTesting(true);
     try {
-      const existing = await getDoc(emailDoc);
+      const existing = await getDoc(emailDocRef);
       const prev = existing.exists() ? (existing.data() as EmailSettings) : null;
       const settings = buildPayload(prev?.privateKey);
       if (!settings.enabled) {
         showAlert(t('error'), t('emailDisabled'));
         return;
       }
-      await sendTestEmail(to, settings);
+      await sendTestEmail(to, settings, tenantId);
       showAlert(t('success'), t('testEmailSent', { to }));
-    } catch (e: any) {
-      showAlert(t('error'), String(e?.message || e));
+    } catch (e: unknown) {
+      showAlert(t('error'), e instanceof Error ? e.message : t('actionFailed'));
     } finally {
       setTesting(false);
     }
   };
+
+  if (!isAdmin) {
+    return (
+      <View className="flex-1 bg-surface-50 items-center justify-center px-6">
+        <MaterialCommunityIcons name="shield-lock" size={48} color={colors.inactive} />
+        <Text className="text-surface-600 text-center mt-3">{t('adminOnlySettings')}</Text>
+      </View>
+    );
+  }
 
   if (loading) {
     return (
@@ -552,7 +533,7 @@ export default function AdminSettingsScreen() {
                   className="rounded-2xl bg-surface-100 items-center justify-center border border-dashed border-surface-300"
                   style={{ width: 88, height: 88 }}
                 >
-                  <MaterialCommunityIcons name="image-plus" size={28} color="#94A3B8" />
+                  <MaterialCommunityIcons name="image-plus" size={28} color={colors.inactive} />
                 </View>
               )}
             </TouchableOpacity>
@@ -699,28 +680,10 @@ export default function AdminSettingsScreen() {
 
           <Text className="text-xs text-surface-400 mb-1">{t('workingDaysLabel')}</Text>
           <Text className="text-[11px] text-surface-400 mb-2">{t('workingDaysHint')}</Text>
-          <View className="flex-row flex-wrap mb-4">
-            {WEEKDAY_KEYS.map(({ day, labelKey }) => {
-              const isWorking = !weeklyOffDays.includes(day);
-              return (
-                <TouchableOpacity
-                  key={day}
-                  onPress={() => toggleWorkingDay(day)}
-                  className={`mr-2 mb-2 px-3 py-2.5 rounded-xl min-w-[52px] items-center ${
-                    isWorking ? 'bg-primary-500' : 'bg-surface-100'
-                  }`}
-                >
-                  <Text
-                    className={`text-xs font-bold ${
-                      isWorking ? 'text-white' : 'text-surface-500'
-                    }`}
-                  >
-                    {t(labelKey as any)}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
+          <WeekdayPicker
+            offDays={weeklyOffDays}
+            onToggle={(day) => setWeeklyOffDays((prev) => toggleOffDay(prev, day))}
+          />
 
           <TouchableOpacity
             onPress={saveWorkSchedule}
@@ -831,28 +794,10 @@ export default function AdminSettingsScreen() {
                 </View>
               </View>
               <Text className="text-xs text-surface-400 mb-1">{t('workingDaysLabel')}</Text>
-              <View className="flex-row flex-wrap mb-3">
-                {WEEKDAY_KEYS.map(({ day, labelKey }) => {
-                  const isWorking = !shiftOffDays.includes(day);
-                  return (
-                    <TouchableOpacity
-                      key={day}
-                      onPress={() => toggleShiftOffDay(day)}
-                      className={`mr-2 mb-2 px-3 py-2.5 rounded-xl min-w-[52px] items-center ${
-                        isWorking ? 'bg-primary-500' : 'bg-surface-100'
-                      }`}
-                    >
-                      <Text
-                        className={`text-xs font-bold ${
-                          isWorking ? 'text-white' : 'text-surface-500'
-                        }`}
-                      >
-                        {t(labelKey as any)}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
+              <WeekdayPicker
+                offDays={shiftOffDays}
+                onToggle={(day) => setShiftOffDays((prev) => toggleOffDay(prev, day))}
+              />
               <View className="flex-row">
                 <TouchableOpacity
                   onPress={resetShiftForm}
@@ -896,7 +841,7 @@ export default function AdminSettingsScreen() {
             <Switch
               value={enabled}
               onValueChange={setEnabled}
-              trackColor={{ false: '#E2E8F0', true: '#93C5FD' }}
+              trackColor={{ false: '#E2E8F0', true: colors.primary300 }}
               thumbColor={enabled ? colors.primary : colors.switchTrack}
             />
           </View>
@@ -934,6 +879,7 @@ export default function AdminSettingsScreen() {
           <Text className="text-xs text-surface-400 mb-1">
             {t('privateKey')} ({t('optional')})
           </Text>
+          <Text className="text-surface-400 text-xs mb-2">{t('privateKeyHint')}</Text>
           <TextInput
             className="border border-surface-200 rounded-xl px-3 h-11 mb-3"
             placeholder={hasPrivateKey ? '••••••••' : t('privateKey')}
@@ -947,7 +893,7 @@ export default function AdminSettingsScreen() {
           <Text className="text-xs text-surface-400 mb-1">{t('fromEmail')}</Text>
           <TextInput
             className="border border-surface-200 rounded-xl px-3 h-11 mb-3"
-            placeholder="noreply@ecfshipment.com"
+            placeholder="noreply@company.com"
             autoCapitalize="none"
             keyboardType="email-address"
             value={fromEmail}
@@ -957,7 +903,7 @@ export default function AdminSettingsScreen() {
           <Text className="text-xs text-surface-400 mb-1">{t('fromName')}</Text>
           <TextInput
             className="border border-surface-200 rounded-xl px-3 h-11 mb-4"
-            placeholder="ECF HR"
+            placeholder="HR Attendance"
             value={fromName}
             onChangeText={setFromName}
           />

@@ -10,8 +10,9 @@ import {
   ScrollView,
   RefreshControl,
   ActivityIndicator,
+  Platform,
 } from 'react-native';
-import { db, collection, getDocs, query, where } from '../../services/firebase';
+import { getDocs, where } from '../../services/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { useAppAlert } from '../../context/AlertContext';
 import { useCompany } from '../../context/CompanyContext';
@@ -27,6 +28,7 @@ import {
   filterAttendanceByPeriod,
   filterDelays,
   filterRequestsByPeriod,
+  formatPeriodLabel,
   formatTsTime,
   periodBounds,
 } from '../../utils/reports';
@@ -40,29 +42,49 @@ import {
   topPayslipsByNet,
   userIdSet,
 } from '../../utils/reportAnalytics';
+import { buildAttendanceRegister } from '../../utils/attendanceRegister';
+import {
+  exportAttendanceRegisterXlsx,
+  printAttendanceRegister,
+} from '../../utils/attendanceRegisterExport';
+import { printReportDocument } from '../../utils/printReportDocument';
+import AttendanceRegisterCard from '../../components/AttendanceRegisterCard';
+import { loadTenantRecords, tenantQuery } from '../../utils/tenantScope';
 import { requestTypeKey } from '../../i18n/translations';
+import { ErrorBoundary } from '../../components/ErrorBoundary';
 import { colors } from '../../constants/colors';
-import { fetchHolidays, holidayDateSet } from '../../utils/holidays';
-import type {
-  AttendanceRecord,
-  Branch,
-  Department,
-  Holiday,
-  HrRequest,
-  Payslip,
-  UserData,
-  WorkShift,
+import { fetchHolidays, holidayDateSet, holidayOccursOn } from '../../utils/holidays';
+import {
+  DEFAULT_TENANT_ID,
+  resolveWorkSchedule,
+  type AttendanceRecord,
+  type Branch,
+  type Department,
+  type Holiday,
+  type HrRequest,
+  type Payslip,
+  type UserData,
+  type WorkShift,
 } from '../../types';
 
 const PREVIEW_LIMIT = 80;
-type ReportTab = 'attendance' | 'payroll' | 'leave';
+type ReportTab = 'register' | 'attendance' | 'payroll' | 'leave';
 
 export default function AdminReportsScreen() {
+  return (
+    <ErrorBoundary compact>
+      <ReportsBody />
+    </ErrorBoundary>
+  );
+}
+
+function ReportsBody() {
   const { user } = useAuth();
   const { showAlert } = useAppAlert();
   const { tenant } = useCompany();
-  const { t } = useLanguage();
-  const tid = user?.tenantId || tenant.id || 'default';
+  const { t, language, isRTL } = useLanguage();
+  const tid = user?.tenantId || tenant.id || DEFAULT_TENANT_ID;
+  const schedule = resolveWorkSchedule(tenant.workSchedule);
 
   const [tab, setTab] = useState<ReportTab>('attendance');
   const [filters, setFilters] = useState<ReportFiltersValue>({
@@ -90,58 +112,37 @@ export default function AdminReportsScreen() {
     setLoading(true);
     try {
       const { start, end } = periodBounds(period);
-      const attQuery = query(
-        collection(db, 'attendance'),
-        where('date', '>=', start),
-        where('date', '<=', end),
-      );
-      const slipQuery = query(collection(db, 'payslips'), where('period', '==', period));
-      const [uSnap, aSnap, rSnap, sSnap, bSnap, dSnap, pSnap, holidayList] = await Promise.all([
-        getDocs(collection(db, 'users')),
-        getDocs(attQuery),
-        getDocs(collection(db, 'hrRequests')),
-        getDocs(collection(db, 'workShifts')),
-        getDocs(collection(db, 'branches')),
-        getDocs(collection(db, 'departments')),
-        getDocs(slipQuery),
-        fetchHolidays(tid),
-      ]);
-      setUsers(
-        uSnap.docs
-          .map((d) => ({ ...(d.data() as UserData), uid: d.id }))
-          .filter((u) => (u.tenantId || 'default') === tid),
-      );
+      const [usersRows, aSnap, requestsRows, shiftsRows, branchRows, deptRows, pSnap, holidayList] =
+        await Promise.all([
+          loadTenantRecords<UserData>('users', tid, 'uid'),
+          getDocs(
+            tenantQuery(
+              'attendance',
+              tid,
+              where('date', '>=', start),
+              where('date', '<=', end),
+            ),
+          ),
+          loadTenantRecords<HrRequest>('hrRequests', tid),
+          loadTenantRecords<WorkShift>('workShifts', tid),
+          loadTenantRecords<Branch>('branches', tid),
+          loadTenantRecords<Department>('departments', tid),
+          getDocs(tenantQuery('payslips', tid, where('period', '==', period))),
+          fetchHolidays(tid),
+        ]);
+      setUsers(usersRows);
       setAttendance(
-        aSnap.docs
-          .map((d) => ({ ...(d.data() as AttendanceRecord), id: d.id }))
-          .filter((a) => (a.tenantId || 'default') === tid || !a.tenantId),
+        aSnap.docs.map((d) => ({ ...(d.data() as AttendanceRecord), id: d.id })),
       );
-      setRequests(
-        rSnap.docs
-          .map((d) => ({ ...(d.data() as HrRequest), id: d.id }))
-          .filter((r) => (r.tenantId || 'default') === tid || !r.tenantId),
-      );
-      setShifts(
-        sSnap.docs
-          .map((d) => ({ ...(d.data() as WorkShift), id: d.id }))
-          .filter((s) => (s.tenantId || 'default') === tid && s.active !== false),
-      );
+      setRequests(requestsRows);
+      setShifts(shiftsRows.filter((s) => s.active !== false));
       setBranches(
-        bSnap.docs
-          .map((d) => ({ ...(d.data() as Branch), id: d.id }))
-          .filter((b) => b.active !== false && (b.tenantId || 'default') === tid)
+        branchRows
+          .filter((b) => b.active !== false)
           .sort((a, b) => a.name.localeCompare(b.name)),
       );
-      setDepartments(
-        dSnap.docs
-          .map((d) => ({ ...(d.data() as Department), id: d.id }))
-          .filter((d) => d.active !== false && (d.tenantId || 'default') === tid),
-      );
-      setPayslips(
-        pSnap.docs
-          .map((d) => ({ ...(d.data() as Payslip), id: d.id }))
-          .filter((p) => (p.tenantId || 'default') === tid),
-      );
+      setDepartments(deptRows.filter((d) => d.active !== false));
+      setPayslips(pSnap.docs.map((d) => ({ ...(d.data() as Payslip), id: d.id })));
       setHolidays(holidayList);
     } catch (e: any) {
       showAlert(t('error'), e?.message || t('actionFailed'));
@@ -170,6 +171,25 @@ export default function AdminReportsScreen() {
     const { start, end } = periodBounds(period);
     return holidayDateSet(holidays, start, end);
   }, [holidays, period]);
+
+  const register = useMemo(
+    () =>
+      buildAttendanceRegister({
+        period,
+        users: filteredUsers,
+        attendance,
+        requests,
+        holidays,
+        shiftsById,
+        tenantSchedule: schedule,
+      }),
+    [period, filteredUsers, attendance, requests, holidays, shiftsById, schedule],
+  );
+
+  const monthHolidays = useMemo(
+    () => holidays.filter((h) => register.dates.some((d) => holidayOccursOn(h, d))),
+    [holidays, register.dates],
+  );
 
   const periodAttAll = useMemo(
     () =>
@@ -220,7 +240,7 @@ export default function AdminReportsScreen() {
         attendance,
         requests,
         shiftsById,
-        tenantSchedule: tenant.workSchedule,
+        tenantSchedule: schedule,
         holidayDates,
       });
       if (absentDays > 0) {
@@ -233,7 +253,7 @@ export default function AdminReportsScreen() {
       }
     });
     return rows.sort((a, b) => b.absentDays - a.absentDays);
-  }, [filteredUsers, period, attendance, requests, shiftsById, tenant.workSchedule, holidayDates]);
+  }, [filteredUsers, period, attendance, requests, shiftsById, schedule, holidayDates]);
 
   const totalAbsentDays = useMemo(
     () => absenceRows.reduce((s, r) => s + r.absentDays, 0),
@@ -251,10 +271,10 @@ export default function AdminReportsScreen() {
         period,
         userIds: ids,
         attendance: periodAttAll,
-        weeklyOffDays: tenant.workSchedule?.weeklyOffDays,
+        weeklyOffDays: schedule.weeklyOffDays,
         holidayDates,
       }),
-    [period, ids, periodAttAll, tenant.workSchedule?.weeklyOffDays, holidayDates],
+    [period, ids, periodAttAll, schedule.weeklyOffDays, holidayDates],
   );
 
   const filteredPayslips = useMemo(() => {
@@ -412,7 +432,111 @@ export default function AdminReportsScreen() {
       );
     });
 
+  const periodLabel = formatPeriodLabel(period, language === 'ar' ? 'ar-EG' : 'en-US');
+
+  const exportTimesheet = () =>
+    runExport('timesheet', async () => {
+      await exportAttendanceRegisterXlsx(
+        `timesheet-${period}.xlsx`,
+        register,
+        {
+          companyName: tenant.name,
+          periodLabel,
+          employee: t('fullName'),
+          employeeId: t('employeeId'),
+          date: t('date'),
+          weekday: t('timesheetWeekday'),
+          status: t('timesheetStatus'),
+          clockIn: t('clockIn'),
+          clockOut: t('clockOut'),
+          notes: t('timesheetNotes'),
+          present: t('present'),
+          late: t('late'),
+          early: t('codeEarly'),
+          vacation: t('typeVacation'),
+          sick: t('typeSick'),
+          unpaid: t('typeUnpaid'),
+          trip: t('typeBusinessTrip'),
+          absent: t('absent'),
+          holiday: t('codeHoliday'),
+          weekend: t('codeWeekend'),
+        },
+        language === 'ar' ? 'ar-EG' : 'en-US',
+      );
+    });
+
+  const printTimesheet = () => {
+    printAttendanceRegister({
+      companyName: tenant.name,
+      periodLabel,
+      generatedAt: new Date().toLocaleString(language === 'ar' ? 'ar-EG' : 'en-US'),
+      title: t('reportTabTimesheet'),
+      employeeCol: t('fullName'),
+      idCol: t('employeeId'),
+      dateCol: t('date'),
+      weekdayCol: t('timesheetWeekday'),
+      statusCol: t('timesheetStatus'),
+      inCol: t('clockIn'),
+      outCol: t('clockOut'),
+      notesCol: t('timesheetNotes'),
+      locale: language === 'ar' ? 'ar-EG' : 'en-US',
+      dir: isRTL ? 'rtl' : 'ltr',
+      legend: [
+        { code: 'P', label: t('codePresent') },
+        { code: 'L', label: t('codeLate') },
+        { code: 'E', label: t('codeEarly') },
+        { code: 'LE', label: t('codeLateEarly') },
+        { code: 'V', label: t('typeVacation') },
+        { code: 'S', label: t('typeSick') },
+        { code: 'U', label: t('typeUnpaid') },
+        { code: 'T', label: t('typeBusinessTrip') },
+        { code: 'H', label: t('codeHoliday') },
+        { code: 'W', label: t('codeWeekend') },
+        { code: 'A', label: t('codeAbsent') },
+      ],
+      register,
+      holidays: monthHolidays,
+      holidaysTitle: t('holidaysTitle'),
+      signatureHr: t('timesheetHrSign'),
+      signatureManager: t('timesheetManagerSign'),
+    });
+  };
+
+  const filterSummary = useMemo(() => {
+    const parts: string[] = [periodLabel];
+    const branch = branches.find((b) => b.id === filters.branchId);
+    const dept = departments.find((d) => d.id === filters.departmentId);
+    if (branch) parts.push(`${t('filterByBranch')}: ${branch.name}`);
+    if (dept) parts.push(`${t('filterByDepartment')}: ${dept.name}`);
+    if (filters.employeeQuery.trim()) parts.push(`${t('search')}: ${filters.employeeQuery.trim()}`);
+    if (filters.status) parts.push(`${t('status')}: ${filters.status}`);
+    if (filters.typeId) parts.push(`${t('requestType')}: ${filters.typeId}`);
+    return parts.length > 1
+      ? t('reportDocumentFilters', { summary: parts.join(' · ') })
+      : t('reportFilterNone');
+  }, [periodLabel, branches, departments, filters, t]);
+
+  const openPrintDocument = (title: string, headers: string[], rows: (string | number)[][]) => {
+    if (Platform.OS !== 'web') {
+      showAlert(t('printReport'), t('print'));
+      return;
+    }
+    printReportDocument({
+      companyName: tenant.name,
+      title,
+      subtitle: periodLabel,
+      generatedAt: new Date().toLocaleString(language === 'ar' ? 'ar-EG' : 'en-US'),
+      filterSummary,
+      dir: isRTL ? 'rtl' : 'ltr',
+      tables: [{ title, headers, rows }],
+      signatureLeft: t('timesheetHrSign'),
+      signatureRight: t('timesheetManagerSign'),
+      printLabel: t('print'),
+    });
+  };
+
   const statusOptions = useMemo(() => {
+    if (tab === 'register') return [];
     if (tab === 'attendance') {
       return [
         { id: '', label: t('all') },
@@ -465,7 +589,7 @@ export default function AdminReportsScreen() {
       </View>
 
       <View className="p-4">
-        <View className="flex-row mb-3">
+        <View className="flex-row mb-2">
           {(['attendance', 'payroll', 'leave'] as ReportTab[]).map((id, idx) => {
             const label =
               id === 'attendance'
@@ -489,6 +613,16 @@ export default function AdminReportsScreen() {
             );
           })}
         </View>
+        <TouchableOpacity
+          onPress={() => switchTab('register')}
+          className={`h-10 rounded-xl items-center justify-center mb-3 ${
+            tab === 'register' ? 'bg-primary-500' : 'bg-white border border-surface-200'
+          }`}
+        >
+          <Text className={`text-xs font-semibold ${tab === 'register' ? 'text-white' : 'text-primary-700'}`}>
+            {t('reportTabTimesheet')}
+          </Text>
+        </TouchableOpacity>
 
         <ReportFilters
           value={filters}
@@ -498,6 +632,18 @@ export default function AdminReportsScreen() {
           statusOptions={statusOptions}
           typeOptions={typeOptions}
         />
+
+        {tab === 'register' && (
+          <AttendanceRegisterCard
+            register={register}
+            loading={loading}
+            companyName={tenant.name}
+            periodLabel={periodLabel}
+            exporting={exporting === 'timesheet'}
+            onExport={exportTimesheet}
+            onPrint={printTimesheet}
+          />
+        )}
 
         {tab === 'attendance' && (
           <>
@@ -536,6 +682,33 @@ export default function AdminReportsScreen() {
                 exportLabel={t('exportAttendanceCsv')}
                 busy={exporting === 'att'}
                 onExport={exportAttendance}
+                onPrint={() =>
+                  openPrintDocument(
+                    t('reportMonthlyAttendance'),
+                    [
+                      t('employeeId'),
+                      t('fullName'),
+                      t('date'),
+                      t('clockIn'),
+                      t('clockOut'),
+                      t('hours'),
+                      t('status'),
+                      t('lateShort'),
+                      t('earlyShort'),
+                    ],
+                    periodAtt.map((r) => [
+                      r.employeeId || '',
+                      r.userName || '',
+                      r.date || '',
+                      formatTsTime(r.clockIn),
+                      formatTsTime(r.clockOut),
+                      r.totalHours != null ? String(r.totalHours) : '',
+                      r.status || '',
+                      String(r.lateMinutes ?? 0),
+                      String(r.earlyLeaveMinutes ?? 0),
+                    ]),
+                  )
+                }
               >
                 <PreviewTable
                   headers={[
@@ -577,6 +750,29 @@ export default function AdminReportsScreen() {
                 exportLabel={t('exportDelaysCsv')}
                 busy={exporting === 'delay'}
                 onExport={exportDelays}
+                onPrint={() =>
+                  openPrintDocument(
+                    t('reportDelays'),
+                    [
+                      t('employeeId'),
+                      t('fullName'),
+                      t('date'),
+                      t('clockIn'),
+                      t('clockOut'),
+                      t('lateShort'),
+                      t('earlyShort'),
+                    ],
+                    periodDelays.map((r) => [
+                      r.employeeId || '',
+                      r.userName || '',
+                      r.date || '',
+                      formatTsTime(r.clockIn),
+                      formatTsTime(r.clockOut),
+                      String(r.lateMinutes ?? 0),
+                      String(r.earlyLeaveMinutes ?? 0),
+                    ]),
+                  )
+                }
               >
                 <PreviewTable
                   headers={[
@@ -617,6 +813,18 @@ export default function AdminReportsScreen() {
                 exportLabel={t('exportAbsencesCsv')}
                 busy={exporting === 'abs'}
                 onExport={exportAbsences}
+                onPrint={() =>
+                  openPrintDocument(
+                    t('reportAbsences'),
+                    [t('employeeId'), t('fullName'), t('absentDays'), t('dates')],
+                    absenceRows.map((r) => [
+                      r.employeeId,
+                      r.fullName,
+                      String(r.absentDays),
+                      r.dates,
+                    ]),
+                  )
+                }
               >
                 <PreviewTable
                   headers={[t('employeeId'), t('fullName'), t('absentDays'), t('dates')]}
@@ -677,6 +885,34 @@ export default function AdminReportsScreen() {
               exportLabel={t('exportPayrollCsv')}
               busy={exporting === 'pay'}
               onExport={exportPayroll}
+              onPrint={() =>
+                openPrintDocument(
+                  t('reportPayroll'),
+                  [
+                    t('employeeId'),
+                    t('fullName'),
+                    t('branch'),
+                    t('gross'),
+                    t('kpiEmployeeSi'),
+                    t('tax'),
+                    t('netPay'),
+                    t('status'),
+                  ],
+                  filteredPayslips.map((p) => {
+                    const u = usersById.get(p.userId);
+                    return [
+                      p.employeeId || '',
+                      p.userName || '',
+                      u?.branchName || '',
+                      money(p.monthlyBaseEarnings ?? p.grossPay).toFixed(2),
+                      money(p.employeeInsurance).toFixed(2),
+                      money(p.incomeTax).toFixed(2),
+                      money(p.netPay).toFixed(2),
+                      p.published ? t('published') : t('draft'),
+                    ];
+                  }),
+                )
+              }
             >
               <PreviewTable
                 headers={[
@@ -760,6 +996,31 @@ export default function AdminReportsScreen() {
               exportLabel={t('exportRequestsCsv')}
               busy={exporting === 'req'}
               onExport={exportRequests}
+              onPrint={() =>
+                openPrintDocument(
+                  t('reportRequests'),
+                  [
+                    t('employeeId'),
+                    t('fullName'),
+                    t('requestType'),
+                    t('startDate'),
+                    t('endDate'),
+                    t('days'),
+                    t('status'),
+                    t('reason'),
+                  ],
+                  periodReq.map((r) => [
+                    r.employeeId || '',
+                    r.userName || '',
+                    t(requestTypeKey(r.type || '')),
+                    r.startDate || '',
+                    r.endDate || '',
+                    r.days != null ? String(r.days) : '',
+                    r.status || '',
+                    r.reason || '',
+                  ]),
+                )
+              }
             >
               <PreviewTable
                 headers={[
@@ -798,6 +1059,27 @@ export default function AdminReportsScreen() {
               exportLabel={t('exportVacationCsv')}
               busy={exporting === 'vac'}
               onExport={exportVacation}
+              onPrint={() =>
+                openPrintDocument(
+                  t('reportVacationBalances'),
+                  [
+                    t('employeeId'),
+                    t('fullName'),
+                    t('vacationAllowanceCol'),
+                    t('vacationUsedCol'),
+                    t('leaveBalanceAdjustment'),
+                    t('vacationRemainingCol'),
+                  ],
+                  vacBalances.map((r) => [
+                    r.employeeId,
+                    r.fullName,
+                    String(r.allowance),
+                    String(r.used),
+                    String(r.adjustment),
+                    String(r.remaining),
+                  ]),
+                )
+              }
             >
               <PreviewTable
                 headers={[
@@ -850,6 +1132,7 @@ function ReportCard({
   exportLabel,
   busy,
   onExport,
+  onPrint,
   children,
 }: {
   title: string;
@@ -857,24 +1140,36 @@ function ReportCard({
   exportLabel: string;
   busy: boolean;
   onExport: () => void;
+  onPrint?: () => void;
   children: React.ReactNode;
 }) {
+  const { t } = useLanguage();
   return (
     <View className="bg-white rounded-2xl p-4 mb-4 border border-surface-100">
       <Text className="font-semibold text-surface-800 mb-1">{title}</Text>
       <Text className="text-surface-500 text-sm mb-3">{summary}</Text>
       {children}
-      <TouchableOpacity
-        onPress={onExport}
-        disabled={busy}
-        className="bg-primary-500 rounded-xl h-12 items-center justify-center mt-3"
-      >
-        {busy ? (
-          <ActivityIndicator color="#fff" />
-        ) : (
-          <Text className="text-white font-semibold">{exportLabel}</Text>
-        )}
-      </TouchableOpacity>
+      <View className="flex-row mt-3">
+        {onPrint && Platform.OS === 'web' ? (
+          <TouchableOpacity
+            onPress={onPrint}
+            className="flex-1 bg-white border border-primary-200 rounded-xl h-12 items-center justify-center mr-2"
+          >
+            <Text className="text-primary-700 font-semibold">{t('printReport')}</Text>
+          </TouchableOpacity>
+        ) : null}
+        <TouchableOpacity
+          onPress={onExport}
+          disabled={busy}
+          className="flex-1 bg-primary-500 rounded-xl h-12 items-center justify-center"
+        >
+          {busy ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text className="text-white font-semibold">{exportLabel}</Text>
+          )}
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }

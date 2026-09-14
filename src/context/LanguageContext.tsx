@@ -10,7 +10,7 @@ import React, {
   useMemo,
   useState,
 } from 'react';
-import { I18nManager, Platform } from 'react-native';
+import { I18nManager, Platform, View } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   type AppLanguage,
@@ -83,7 +83,11 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
     [language, setLanguage, t],
   );
 
-  if (!ready) return null;
+  if (!ready) {
+    return (
+      <View style={{ flex: 1, backgroundColor: '#FFFFFF' }} />
+    );
+  }
 
   return (
     <LanguageContext.Provider value={value}>{children}</LanguageContext.Provider>

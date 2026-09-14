@@ -93,9 +93,21 @@ export interface Tenant {
   licenseKey?: string;
   /** Notes for platform owner */
   licenseNotes?: string;
+  /** Client company admin login — stored at provision, backfilled from users */
+  adminEmail?: string;
+  adminUid?: string;
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
   createdBy?: string;
+}
+
+/** Public join card — no license keys, tax IDs, or billing notes */
+export interface TenantInvite {
+  tenantId: string;
+  name: string;
+  slug: string;
+  active: boolean;
+  licenseState: 'ok' | 'expired' | 'suspended';
 }
 
 export const DEFAULT_TENANT: Tenant = {
@@ -118,6 +130,16 @@ export type Nationality = 'egyptian' | 'other';
 export type TaxTreatment = 'original' | 'form2' | 'form3' | 'other';
 export type InsuranceStatus = 'insured' | 'not_insured' | 'ended';
 export type UhiStatus = 'enrolled' | 'not_enrolled';
+
+export interface UserDocument {
+  id: string;
+  name: string;
+  url: string;
+  path: string;
+  mimeType?: string;
+  uploadedAt: string;
+  uploadedBy?: string;
+}
 
 export interface UserData {
   uid: string;
@@ -177,6 +199,8 @@ export interface UserData {
   accountHolder?: string;
   accountNumber?: string;
   iban?: string;
+  /** HR file attachments for this employee */
+  documents?: UserDocument[];
   active?: boolean;
   /** Platform owner — can manage all tenants / licenses (vendor console) */
   platformAdmin?: boolean;
@@ -237,12 +261,14 @@ export const DEFAULT_COMPANY_SETTINGS: CompanySettings = {
 
 /**
  * Outbound email via EmailJS (Spark-compatible HTTPS).
- * Stored at `payrollSettings/smtp` (admin-only).
+ * Stored at `emailPublic/{tenantId}` (signed-in members) and
+ * `payrollSettings/smtp` (admin-only, optional privateKey).
  * Connect Zoho (or any SMTP) inside the EmailJS dashboard — not from this app.
  */
 export interface EmailSettings {
   enabled: boolean;
   provider: 'emailjs';
+  tenantId?: string;
   /** EmailJS Public Key (Account → API Keys) */
   publicKey: string;
   /** EmailJS Service ID (Email Services) */
@@ -251,7 +277,8 @@ export interface EmailSettings {
   templateId: string;
   /**
    * Optional Private Key for restricted API access.
-   * Admin-only Firestore; prefer creating templates that don't need it.
+   * Admin Settings / test send only — never copied to emailPublic.
+   * In-app HR mail uses the public key; leave this empty unless testing.
    */
   privateKey?: string;
   fromEmail: string;
@@ -295,6 +322,7 @@ export interface Department {
   name: string;
   branchId: string;
   tenantId?: string;
+  headUserId?: string | null;
   active?: boolean;
   createdAt?: Timestamp;
 }
@@ -508,6 +536,10 @@ export interface EmployeeStatus {
   employeeId: string;
   isCheckedIn: boolean;
   clockInTime?: Date;
+  branchId?: string;
+  departmentId?: string;
+  branchName?: string;
+  department?: string;
 }
 
 export interface DailyStats {
@@ -590,14 +622,10 @@ export interface AppNotification {
   body: string;
   read: boolean;
   type: NotificationType;
+  tenantId?: string;
   createdAt?: Timestamp;
 }
 
-export interface Department {
-  id: string;
-  name: string;
-  headUserId?: string | null;
-}
 
 export interface SalaryAllowances {
   /** Housing / residence allowance */

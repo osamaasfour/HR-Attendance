@@ -22,8 +22,7 @@ import { assertTenantLicenseOk } from '../utils/tenantLicense';
 import {
   ensureDefaultTenant,
   getTenantById,
-  getTenantBySlug,
-  countTenantUsers,
+  getTenantInviteBySlug,
 } from '../utils/tenants';
 import {
   auth,
@@ -266,26 +265,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Join existing tenant
         const code = options?.tenantCode?.trim();
         if (code) {
-          const tenant = await getTenantBySlug(code);
-          if (!tenant) {
+          const invite = await getTenantInviteBySlug(code);
+          if (!invite) {
             throw new Error('Invalid company code.');
           }
-          assertTenantLicenseOk(tenant);
-          const seats = tenant.maxUsers;
-          if (seats && seats > 0) {
-            const used = await countTenantUsers(tenant.id);
-            if (used >= seats) {
-              const err: any = new Error('This company has reached its user seat limit.');
-              err.code = 'auth/seat-limit';
-              throw err;
-            }
+          if (!invite.active || invite.licenseState !== 'ok') {
+            const err: any = new Error(
+              invite.licenseState === 'expired'
+                ? 'Company license has expired. Contact your vendor to renew.'
+                : 'This company workspace is suspended.',
+            );
+            err.code =
+              invite.licenseState === 'expired' ? 'auth/license-expired' : 'auth/tenant-suspended';
+            throw err;
           }
-          tenantId = tenant.id;
+          tenantId = invite.tenantId;
         } else {
-          await ensureDefaultTenant();
-          const tenant = await getTenantById(DEFAULT_TENANT_ID);
-          assertTenantLicenseOk(tenant);
-          tenantId = DEFAULT_TENANT_ID;
+          const invite = await getTenantInviteBySlug('default');
+          if (!invite || !invite.active || invite.licenseState !== 'ok') {
+            throw new Error('Invalid company code.');
+          }
+          tenantId = invite.tenantId || DEFAULT_TENANT_ID;
         }
 
         const credential = await createUserWithEmailAndPassword(auth, email, password);

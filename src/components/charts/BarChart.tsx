@@ -1,7 +1,5 @@
 import React from 'react';
 import { View, Text, ScrollView } from 'react-native';
-import Svg, { Rect } from 'react-native-svg';
-import { colors } from '../../constants/colors';
 
 export type ChartBarPart = { value: number; color: string };
 export type ChartBarItem = { label: string; parts: ChartBarPart[] };
@@ -26,8 +24,6 @@ export default function BarChart({
     1,
     ...items.map((it) => it.parts.reduce((s, p) => s + Math.max(0, p.value), 0)),
   );
-  const gap = 6;
-  const chartW = Math.max(items.length * (barWidth + gap) + 8, 120);
 
   if (items.length === 0 || items.every((it) => it.parts.every((p) => p.value <= 0))) {
     return (
@@ -40,40 +36,40 @@ export default function BarChart({
   return (
     <View>
       <ScrollView horizontal showsHorizontalScrollIndicator>
-        <View>
-          <Svg width={chartW} height={height}>
-            {items.map((it, i) => {
-              const x = 4 + i * (barWidth + gap);
-              let y = height;
-              return it.parts.map((p, pi) => {
-                const h = (Math.max(0, p.value) / max) * (height - 4);
-                y -= h;
-                return (
-                  <Rect
-                    key={`${i}-${pi}`}
-                    x={x}
-                    y={y}
-                    width={barWidth}
-                    height={Math.max(h, p.value > 0 ? 1 : 0)}
-                    rx={2}
-                    fill={p.color || colors.primary}
-                  />
-                );
-              });
-            })}
-          </Svg>
-          <View className="flex-row mt-1" style={{ width: chartW }}>
-            {items.map((it, i) => (
+        <View className="flex-row items-end pt-1" style={{ height: height + 18 }}>
+          {items.map((it, i) => (
+            <View key={`b-${i}`} className="items-center mr-1.5">
+              <View
+                style={{
+                  width: barWidth,
+                  height,
+                  justifyContent: 'flex-end',
+                }}
+              >
+                {[...it.parts].reverse().map((p, pi) => {
+                  const h = (Math.max(0, p.value) / max) * height;
+                  if (h <= 0) return null;
+                  return (
+                    <View
+                      key={`p-${i}-${pi}`}
+                      style={{
+                        width: barWidth,
+                        height: Math.max(2, h),
+                        backgroundColor: p.color,
+                      }}
+                    />
+                  );
+                })}
+              </View>
               <Text
-                key={`l-${i}`}
-                className="text-[9px] text-surface-400 text-center"
-                style={{ width: barWidth + gap }}
+                className="text-[9px] text-surface-400 text-center mt-1"
+                style={{ width: Math.max(barWidth, 18) }}
                 numberOfLines={1}
               >
                 {it.label}
               </Text>
-            ))}
-          </View>
+            </View>
+          ))}
         </View>
       </ScrollView>
       {legend && legend.length > 0 && (

@@ -8,6 +8,8 @@ import {
   getDocs,
   updateDoc,
   doc,
+  query,
+  where,
   Timestamp,
 } from '../services/firebase';
 import { needsEmployeeIdMigration, normalizeEmployeeId } from './employeeId';
@@ -39,18 +41,20 @@ export async function migrateTenantEmployeeIds(
   );
 
   await Promise.all(
-    DENORMALIZED_COLLECTIONS.map(async (col) => {
-      const snap = await getDocs(collection(db, col));
-      const updates = snap.docs
-        .map((d) => {
-          const data = d.data() as { userId?: string; employeeId?: string };
-          const next = data.userId ? renames.get(data.userId) : undefined;
-          if (!next || data.employeeId === next) return null;
-          return updateDoc(doc(db, col, d.id), { employeeId: next });
-        })
-        .filter(Boolean) as Promise<void>[];
-      await Promise.all(updates);
-    }),
+    [...renames.entries()].flatMap(([uid, employeeId]) =>
+      DENORMALIZED_COLLECTIONS.map(async (col) => {
+        const snap = await getDocs(
+          query(collection(db, col), where('userId', '==', uid)),
+        );
+        await Promise.all(
+          snap.docs.map((d) => {
+            const data = d.data() as { employeeId?: string };
+            if (data.employeeId === employeeId) return Promise.resolve();
+            return updateDoc(doc(db, col, d.id), { employeeId });
+          }),
+        );
+      }),
+    ),
   );
 
   return { migrated: renames.size };

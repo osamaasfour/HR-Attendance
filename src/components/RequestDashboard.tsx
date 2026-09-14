@@ -219,7 +219,7 @@ export default function RequestDashboard({
               )}
               <Text className="text-surface-400 text-sm mt-1">{item.reason}</Text>
               {!!formatCreatedAt(item) && (
-                <Text className="text-surface-300 text-[11px] mt-2">
+                <Text className="text-surface-600 text-[11px] mt-2">
                   {t('submittedAt')} {formatCreatedAt(item)}
                 </Text>
               )}

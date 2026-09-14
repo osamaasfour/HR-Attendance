@@ -158,6 +158,12 @@ export async function adminCreateEmployee(input: CreateEmployeeInput): Promise<U
     await setDoc(doc(db, 'users', uid), userData);
     await secondarySignOut(secondaryAuth);
     return userData;
+  } catch (e: any) {
+    const err: any = new Error(
+      String(e?.message || e || 'Could not create employee account.').replace(/^Firebase:\s*/i, ''),
+    );
+    err.code = e?.code || 'auth/create-failed';
+    throw err;
   } finally {
     try {
       await deleteApp(secondary);

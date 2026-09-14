@@ -22,6 +22,14 @@ service cloud.firestore {
       return callerDoc().get('tenantId', 'default');
     }
 
+    /** payrollSettings doc ids: `default` / `smtp` (legacy) or `{tenantId}` / `smtp_{tenantId}` */
+    function payrollSettingsBelongsToCaller(docId) {
+      let tid = callerTenant();
+      return (tid == 'default' && (docId == 'default' || docId == 'smtp'))
+        || docId == tid
+        || docId == ('smtp_' + tid);
+    }
+
     function isAdmin() {
       return isSignedIn() && callerRole() == 'admin';
     }
@@ -56,17 +64,41 @@ service cloud.firestore {
     }
 
     match /tenants/{tenantId} {
-      // Public read so Sign Up can resolve invite codes before/after Auth
-      allow read: if true;
-      // Only platform owner may create new company workspaces
+      allow read: if isPlatformAdmin()
+        || (isSignedIn() && callerTenant() == tenantId);
       allow create: if isPlatformAdmin()
         && request.resource.data.keys().hasAll(['name', 'slug']);
       allow update: if isPlatformAdmin()
         || (isAdmin() && callerTenant() == tenantId
-            // Company admins cannot change license / suspension fields
             && !request.resource.data.diff(resource.data).affectedKeys()
                 .hasAny(['licenseExpiresAt', 'maxUsers', 'licenseKey', 'licenseNotes', 'active', 'plan', 'slug']));
       allow delete: if isPlatformAdmin() && tenantId != 'default';
+    }
+
+    /** Public invite codes for Sign Up — name/slug/active only, no tax or contract fields */
+    match /tenantInvites/{slug} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasAll(['tenantId', 'name', 'slug', 'active', 'licenseState'])
+        && request.resource.data.slug == slug
+        && request.resource.data.licenseState in ['ok', 'expired', 'suspended']
+        && (
+          isPlatformAdmin()
+          || (isAdmin() && request.resource.data.tenantId == callerTenant())
+        );
+      allow update: if request.resource.data.keys().hasAll(['tenantId', 'name', 'slug', 'active', 'licenseState'])
+        && request.resource.data.slug == slug
+        && request.resource.data.licenseState in ['ok', 'expired', 'suspended']
+        && (
+          isPlatformAdmin()
+          || (isAdmin()
+              && resource.data.tenantId == callerTenant()
+              && request.resource.data.tenantId == resource.data.tenantId
+              && request.resource.data.slug == resource.data.slug
+              && request.resource.data.active == resource.data.active
+              && request.resource.data.licenseState == resource.data.licenseState)
+        );
+      allow delete: if isPlatformAdmin()
+        || (isAdmin() && resource.data.tenantId == callerTenant());
     }
 
     match /users/{userId} {
@@ -110,6 +142,18 @@ service cloud.firestore {
               )
             ));
       allow delete: if isPlatformAdmin() || (isAdmin() && sameTenant());
+
+      match /employeeDocuments/{docId} {
+        function employeeTenant() {
+          return get(/databases/$(database)/documents/users/$(userId)).data.get('tenantId', 'default');
+        }
+        allow read: if isSignedIn()
+          && (isSelf(userId)
+              || isPlatformAdmin()
+              || (isAdmin() && employeeTenant() == callerTenant()));
+        allow create, update, delete: if isPlatformAdmin()
+          || (isAdmin() && employeeTenant() == callerTenant());
+      }
     }
 
     // Legacy company settings — keep for migration; prefer tenants/*
@@ -219,8 +263,36 @@ service cloud.firestore {
 
     match /notifications/{notifId} {
       allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow create: if isSignedIn();
-      allow update: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn()
+        && request.resource.data.keys().hasAll(['userId', 'title', 'body', 'read', 'type'])
+        && request.resource.data.read == false
+        && request.resource.data.userId is string
+        && request.resource.data.title is string
+        && request.resource.data.title.size() > 0
+        && request.resource.data.title.size() < 300
+        && request.resource.data.body is string
+        && request.resource.data.body.size() > 0
+        && request.resource.data.body.size() < 4000
+        && request.resource.data.type in [
+          'leave_decision', 'leave_submitted', 'request_submitted', 'request_decision', 'general'
+        ]
+        && request.resource.data.get('tenantId', callerTenant()) == callerTenant()
+        && exists(/databases/$(database)/documents/users/$(request.resource.data.userId))
+        && (
+          request.resource.data.userId == request.auth.uid
+          || (
+            get(/databases/$(database)/documents/users/$(request.resource.data.userId))
+              .data.get('tenantId', 'default') == callerTenant()
+            && (
+              isAdminOrManager()
+              || request.resource.data.userId == callerDoc().get('managerId', '')
+            )
+          )
+        );
+      allow update: if isSignedIn()
+        && resource.data.userId == request.auth.uid
+        && request.resource.data.userId == resource.data.userId
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
       allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
     }
 
@@ -237,8 +309,21 @@ service cloud.firestore {
     }
 
     match /payrollSettings/{docId} {
-      allow read: if isAdmin() || isPlatformAdmin();
-      allow write: if isAdmin() || isPlatformAdmin();
+      allow read, write: if isPlatformAdmin()
+        || (isAdmin() && payrollSettingsBelongsToCaller(docId));
+    }
+
+    /** EmailJS public IDs — members can send; never store privateKey here */
+    match /emailPublic/{tenantId} {
+      allow read: if isPlatformAdmin()
+        || (isSignedIn() && callerTenant() == tenantId);
+      allow write: if (isPlatformAdmin() || (isAdmin() && callerTenant() == tenantId))
+        && request.resource.data.tenantId == tenantId
+        && request.resource.data.keys().hasOnly([
+          'enabled', 'provider', 'tenantId', 'publicKey', 'serviceId', 'templateId',
+          'fromEmail', 'fromName', 'updatedAt', 'updatedBy'
+        ])
+        && !request.resource.data.keys().hasAny(['privateKey', 'accessToken', 'password', 'smtpPassword']);
     }
 
     match /appSettings/{docId} {

@@ -23,8 +23,10 @@ import {
   resolveAnnualLeaveAllowance,
   resolveLeaveBalanceAdjustment,
 } from '../utils/leaveBalance';
-import { trySendAppEmail } from '../utils/sendEmail';
+import { escapeHtml, trySendAppEmail } from '../utils/sendEmail';
+import { createAppNotification } from '../utils/notifications';
 import { requestTypeKey, translations, translate } from '../i18n/translations';
+import { tenantQuery } from '../utils/tenantScope';
 import type { HrRequest, HrRequestStatus, HrRequestType } from '../types';
 
 function daysBetween(start: string, end: string): number {
@@ -136,27 +138,27 @@ export function useHrRequests() {
     if (user.role !== 'admin' && user.role !== 'manager') return;
     setIsLoading(true);
     try {
+      const tid = user.tenantId || 'default';
       let q;
       if (user.role === 'admin') {
-        q = query(
-          collection(db, 'hrRequests'),
+        q = tenantQuery(
+          'hrRequests',
+          tid,
           where('status', '==', 'pending'),
           orderBy('createdAt', 'desc'),
         );
       } else {
-        q = query(
-          collection(db, 'hrRequests'),
+        q = tenantQuery(
+          'hrRequests',
+          tid,
           where('managerId', '==', user.uid),
           where('status', '==', 'pending'),
           orderBy('createdAt', 'desc'),
         );
       }
       const snap = await getDocs(q);
-      const tid = user.tenantId || 'default';
       setPendingRequests(
-        snap.docs
-          .map((d) => ({ ...(d.data() as HrRequest), id: d.id }))
-          .filter((r) => (r.tenantId || 'default') === tid),
+        snap.docs.map((d) => ({ ...(d.data() as HrRequest), id: d.id })),
       );
     } catch (error) {
       console.error('[HrRequests] pending failed', error);
@@ -171,22 +173,21 @@ export function useHrRequests() {
     if (user.role !== 'admin' && user.role !== 'manager') return;
     setIsLoading(true);
     try {
+      const tid = user.tenantId || 'default';
       let q;
       if (user.role === 'admin') {
-        q = query(collection(db, 'hrRequests'), orderBy('createdAt', 'desc'));
+        q = tenantQuery('hrRequests', tid, orderBy('createdAt', 'desc'));
       } else {
-        q = query(
-          collection(db, 'hrRequests'),
+        q = tenantQuery(
+          'hrRequests',
+          tid,
           where('managerId', '==', user.uid),
           orderBy('createdAt', 'desc'),
         );
       }
       const snap = await getDocs(q);
-      const tid = user.tenantId || 'default';
       setTeamRequests(
-        snap.docs
-          .map((d) => ({ ...(d.data() as HrRequest), id: d.id }))
-          .filter((r) => (r.tenantId || 'default') === tid),
+        snap.docs.map((d) => ({ ...(d.data() as HrRequest), id: d.id })),
       );
     } catch (error) {
       console.error('[HrRequests] team failed', error);
@@ -238,26 +239,24 @@ export function useHrRequests() {
         createdAt: Timestamp.now(),
       });
 
-      await addDoc(collection(db, 'notifications'), {
+      await createAppNotification({
         userId: user.uid,
         title: translations.en.notifRequestSubmittedTitle,
         body: translate('en', 'notifRequestSubmittedBody', { type: typeLabel }),
-        read: false,
         type: 'request_submitted',
-        createdAt: Timestamp.now(),
+        tenantId: user.tenantId || 'default',
       });
 
       if (user.managerId) {
-        await addDoc(collection(db, 'notifications'), {
+        await createAppNotification({
           userId: user.managerId,
           title: translations.en.notifApprovalNeededTitle,
           body: translate('en', 'notifApprovalNeededBody', {
             name: user.fullName,
             type: typeLabel,
           }),
-          read: false,
           type: 'request_submitted',
-          createdAt: Timestamp.now(),
+          tenantId: user.tenantId || 'default',
         });
 
         const managerEmail = await loadUserEmail(user.managerId);
@@ -281,8 +280,8 @@ export function useHrRequests() {
           ]
             .filter(Boolean)
             .join('\n'),
-          html: `<p><strong>${user.fullName}</strong> submitted a <strong>${typeLabel}</strong> request.</p>
-<p>Dates: ${dateLine}<br/>Reason: ${input.reason}</p>
+          html: `<p><strong>${escapeHtml(user.fullName)}</strong> submitted a <strong>${escapeHtml(typeLabel)}</strong> request.</p>
+<p>Dates: ${escapeHtml(dateLine)}<br/>Reason: ${escapeHtml(input.reason)}</p>
 <p>Open the HR Attendance app → Approvals to review.</p>`,
         });
       }
@@ -303,7 +302,7 @@ export function useHrRequests() {
         reviewedAt: Timestamp.now(),
         tenantId: user.tenantId || 'default',
       });
-      await addDoc(collection(db, 'notifications'), {
+      await createAppNotification({
         userId: targetUserId,
         title:
           status === 'approved'
@@ -313,9 +312,8 @@ export function useHrRequests() {
           status === 'approved'
             ? translations.en.notifApprovedBody
             : translations.en.notifRejectedBody,
-        read: false,
         type: 'request_decision',
-        createdAt: Timestamp.now(),
+        tenantId: user.tenantId || 'default',
       });
 
       const employeeEmail = await loadUserEmail(targetUserId);
@@ -324,7 +322,7 @@ export function useHrRequests() {
         tenantId: user.tenantId || 'default',
         subject: `HR request ${status}`,
         text: `Your HR request was ${status} by ${user.fullName}.`,
-        html: `<p>Your HR request was <strong>${status}</strong> by ${user.fullName}.</p>`,
+        html: `<p>Your HR request was <strong>${escapeHtml(status)}</strong> by ${escapeHtml(user.fullName)}.</p>`,
       });
 
       await Promise.all([refreshPending(), refreshTeam()]);

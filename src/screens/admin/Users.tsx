@@ -10,14 +10,15 @@ import {
   Image,
   ActivityIndicator,
   Platform,
+  Linking,
+  Modal,
+  Dimensions,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
 import {
   db,
-  collection,
-  getDocs,
   getDoc,
   updateDoc,
   doc,
@@ -27,10 +28,24 @@ import { useAuth } from '../../context/AuthContext';
 import { useAppAlert } from '../../context/AlertContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { uploadProfilePhoto } from '../../utils/uploadProfilePhoto';
+import { uploadUserDocument, deleteVpsDocumentFile } from '../../utils/uploadUserDocument';
+import { decodeMojibakeFileName } from '../../utils/decodeFileName';
+import {
+  downloadUserDocumentFile,
+  isImageDocument,
+  isPdfDocument,
+} from '../../utils/downloadUserDocument';
+import { pickLocalFileWeb } from '../../utils/pickLocalFileWeb';
+import {
+  deleteEmployeeDocument,
+  loadEmployeeDocumentsForUser,
+  saveEmployeeDocument,
+} from '../../utils/userEmployeeDocuments';
 import { adminUpdateUserAuthCredentials } from '../../utils/adminUpdateAuth';
 import { adminCreateEmployee } from '../../utils/adminCreateEmployee';
 import { nextEmployeeId } from '../../utils/employeeId';
 import { migrateTenantEmployeeIds } from '../../utils/migrateEmployeeIds';
+import { loadTenantRecords } from '../../utils/tenantScope';
 import { formatTime12h } from '../../components/TimeField';
 import { ANNUAL_LEAVE_ALLOWANCE } from '../../constants/theme';
 import {
@@ -40,7 +55,7 @@ import {
 } from '../../utils/leaveBalance';
 import { vacationUsedInYear } from '../../utils/reports';
 import { countTenantUsers, getTenantById } from '../../utils/tenants';
-import type { Branch, Compensation, Department, HrRequest, UserData, UserRole, WorkLocation, WorkShift, Nationality, TaxTreatment, InsuranceStatus, UhiStatus } from '../../types';
+import type { Branch, Compensation, Department, HrRequest, UserData, UserDocument, UserRole, WorkLocation, WorkShift, Nationality, TaxTreatment, InsuranceStatus, UhiStatus } from '../../types';
 import type { TranslationKey } from '../../i18n/translations';
 import { colors } from '../../constants/colors';
 import DateField from '../../components/DateField';
@@ -102,6 +117,10 @@ export default function AdminUsersScreen() {
   const [accountNumber, setAccountNumber] = useState('');
   const [iban, setIban] = useState('');
   const [photoBusy, setPhotoBusy] = useState(false);
+  const [docsBusy, setDocsBusy] = useState(false);
+  const [previewDoc, setPreviewDoc] = useState<UserDocument | null>(null);
+  const [downloadBusyId, setDownloadBusyId] = useState<string | null>(null);
+  const [userDocs, setUserDocs] = useState<UserDocument[]>([]);
   const [saving, setSaving] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
 
@@ -128,54 +147,46 @@ export default function AdminUsersScreen() {
     setLoading(true);
     try {
       const tid = user?.tenantId || 'default';
-      const [userSnap, branchSnap, deptSnap, locSnap, shiftSnap, reqSnap] = await Promise.all([
-        getDocs(collection(db, 'users')),
-        getDocs(collection(db, 'branches')),
-        getDocs(collection(db, 'departments')),
-        getDocs(collection(db, 'workLocations')),
-        getDocs(collection(db, 'workShifts')),
-        getDocs(collection(db, 'hrRequests')),
-      ]);
-      let tenantUsers = userSnap.docs
-        .map((d) => ({ ...(d.data() as UserData), uid: d.id }))
-        .filter((u) => (u.tenantId || 'default') === tid);
+      const [tenantUsersRaw, branchRows, deptRows, locRows, shiftRows, reqRows] =
+        await Promise.all([
+          loadTenantRecords<UserData>('users', tid, 'uid'),
+          loadTenantRecords<Branch>('branches', tid),
+          loadTenantRecords<Department>('departments', tid),
+          loadTenantRecords<WorkLocation>('workLocations', tid),
+          loadTenantRecords<WorkShift>('workShifts', tid),
+          loadTenantRecords<HrRequest>('hrRequests', tid),
+        ]);
+      let tenantUsers = tenantUsersRaw;
 
       try {
         const { migrated } = await migrateTenantEmployeeIds(tenantUsers);
         if (migrated > 0) {
-          const refreshed = await getDocs(collection(db, 'users'));
-          tenantUsers = refreshed.docs
-            .map((d) => ({ ...(d.data() as UserData), uid: d.id }))
-            .filter((u) => (u.tenantId || 'default') === tid);
+          tenantUsers = await loadTenantRecords<UserData>('users', tid, 'uid');
         }
       } catch (e) {
         console.warn('[Users] employee ID migration skipped', e);
       }
 
       setUsers(tenantUsers);
-      setHrRequests(reqSnap.docs.map((d) => ({ ...(d.data() as HrRequest), id: d.id })));
+      setHrRequests(reqRows);
       setBranches(
-        branchSnap.docs
-          .map((d) => ({ ...(d.data() as Branch), id: d.id }))
-          .filter((b) => b.active !== false && (b.tenantId || 'default') === tid)
+        branchRows
+          .filter((b) => b.active !== false)
           .sort((a, b) => a.name.localeCompare(b.name)),
       );
       setDepartments(
-        deptSnap.docs
-          .map((d) => ({ ...(d.data() as Department), id: d.id }))
-          .filter((d) => d.active !== false && (d.tenantId || 'default') === tid)
+        deptRows
+          .filter((d) => d.active !== false)
           .sort((a, b) => a.name.localeCompare(b.name)),
       );
       setWorkLocations(
-        locSnap.docs
-          .map((d) => ({ ...(d.data() as WorkLocation), id: d.id }))
-          .filter((loc) => loc.active !== false && (loc.tenantId || 'default') === tid)
+        locRows
+          .filter((loc) => loc.active !== false)
           .sort((a, b) => a.name.localeCompare(b.name)),
       );
       setWorkShifts(
-        shiftSnap.docs
-          .map((d) => ({ ...(d.data() as WorkShift), id: d.id }))
-          .filter((s) => s.active !== false && (s.tenantId || 'default') === tid)
+        shiftRows
+          .filter((s) => s.active !== false)
           .sort((a, b) => a.name.localeCompare(b.name)),
       );
     } finally {
@@ -231,6 +242,7 @@ export default function AdminUsersScreen() {
     setAccountHolder('');
     setAccountNumber('');
     setIban('');
+    setUserDocs([]);
     setCreateRole('employee');
     setEditing(null);
     setCreating(false);
@@ -338,8 +350,19 @@ export default function AdminUsersScreen() {
     setAccountHolder(item.accountHolder || '');
     setAccountNumber(item.accountNumber || '');
     setIban(item.iban || '');
+    setUserDocs([]);
+    void loadEmployeeDocuments(item);
     if (!item.bankName && !item.accountHolder && !item.accountNumber && !item.iban) {
       void loadBankFallback(item.uid);
+    }
+  };
+
+  const loadEmployeeDocuments = async (item: UserData) => {
+    try {
+      const docs = await loadEmployeeDocumentsForUser(item.uid, item.documents);
+      setUserDocs(docs);
+    } catch (e: any) {
+      showAlert(t('error'), e?.message || t('actionFailed'));
     }
   };
 
@@ -610,6 +633,107 @@ export default function AdminUsersScreen() {
       showAlert(t('error'), e?.message || t('photoUploadFailed'));
     } finally {
       setPhotoBusy(false);
+    }
+  };
+
+  const uploadEmployeeDocument = async () => {
+    if (!editing || docsBusy) return;
+    try {
+      let picked: {
+        uri: string;
+        name: string;
+        mimeType?: string | null;
+        file?: File;
+      } | null = null;
+      if (Platform.OS === 'web') {
+        picked = await pickLocalFileWeb({
+          accept: 'application/pdf,image/*,.pdf,.png,.jpg,.jpeg,.webp',
+        });
+      } else {
+        const result = await DocumentPicker.getDocumentAsync({
+          type: ['application/pdf', 'image/*'],
+          copyToCacheDirectory: true,
+          multiple: false,
+        });
+        if (!result.canceled && result.assets?.[0]) {
+          const asset = result.assets[0];
+          picked = {
+            uri: asset.uri,
+            name: asset.name || 'document.pdf',
+            mimeType: asset.mimeType,
+          };
+        }
+      }
+      if (!picked) return;
+      setDocsBusy(true);
+      const docItem = await uploadUserDocument(
+        editing.uid,
+        {
+          uri: picked.uri,
+          name: picked.name || 'document.pdf',
+          mimeType: picked.mimeType,
+          blob: picked.file,
+        },
+        user?.uid,
+      );
+      await saveEmployeeDocument(editing.uid, docItem);
+      const nextDocs = [...userDocs, docItem];
+      setUserDocs(nextDocs);
+      showAlert(t('success'), t('userDocumentUploaded'));
+    } catch (e: any) {
+      showAlert(t('error'), e?.message || t('actionFailed'));
+    } finally {
+      setDocsBusy(false);
+    }
+  };
+
+  const confirmDeleteDocument = (docItem: UserDocument) => {
+    if (!editing) return;
+    showAlert(t('deleteUserDocumentTitle'), t('deleteUserDocumentConfirm', { name: decodeMojibakeFileName(docItem.name) }), [
+      { text: t('cancel'), style: 'cancel' },
+      {
+        text: t('delete'),
+        style: 'destructive',
+        onPress: () => {
+          void (async () => {
+            try {
+              await deleteEmployeeDocument(editing.uid, docItem.id);
+              void deleteVpsDocumentFile(docItem);
+              const nextDocs = userDocs.filter((d) => d.id !== docItem.id);
+              setUserDocs(nextDocs);
+              if (previewDoc?.id === docItem.id) setPreviewDoc(null);
+              showAlert(t('success'), t('userDocumentDeleted'));
+            } catch (e: any) {
+              showAlert(t('error'), e?.message || t('actionFailed'));
+            }
+          })();
+        },
+      },
+    ]);
+  };
+
+  const openDocumentPreview = (docItem: UserDocument) => {
+    const name = decodeMojibakeFileName(docItem.name);
+    if (Platform.OS !== 'web' && isPdfDocument(docItem.mimeType, name)) {
+      void Linking.openURL(docItem.url);
+      return;
+    }
+    setPreviewDoc(docItem);
+  };
+
+  const downloadDocument = async (docItem: UserDocument) => {
+    if (downloadBusyId) return;
+    try {
+      setDownloadBusyId(docItem.id);
+      await downloadUserDocumentFile({
+        url: docItem.url,
+        name: decodeMojibakeFileName(docItem.name),
+        mimeType: docItem.mimeType,
+      });
+    } catch (e: any) {
+      showAlert(t('error'), e?.message || t('actionFailed'));
+    } finally {
+      setDownloadBusyId(null);
     }
   };
 
@@ -1452,6 +1576,139 @@ export default function AdminUsersScreen() {
             )}
             {renderStatutoryFields()}
             {renderBankFields()}
+
+            <View className="bg-surface-50 rounded-xl p-3 mb-3 border border-surface-100">
+              <Text className="text-xs font-semibold text-surface-700 mb-1">
+                {t('userDocumentsTitle')}
+              </Text>
+              <Text className="text-[11px] text-surface-500 mb-2">{t('userDocumentsHint')}</Text>
+              {userDocs.length === 0 ? (
+                <Text className="text-xs text-surface-400 mb-2">{t('noUserDocuments')}</Text>
+              ) : (
+                userDocs.map((docItem) => {
+                  const displayName = decodeMojibakeFileName(docItem.name);
+                  return (
+                  <View
+                    key={docItem.id}
+                    className="flex-row items-center bg-white rounded-lg border border-surface-100 px-3 py-2 mb-2"
+                  >
+                    <MaterialCommunityIcons
+                      name={
+                        isImageDocument(docItem.mimeType, displayName)
+                          ? 'file-image-outline'
+                          : 'file-document-outline'
+                      }
+                      size={18}
+                      color={colors.primary}
+                    />
+                    <TouchableOpacity
+                      className="flex-1 ml-2"
+                      onPress={() => openDocumentPreview(docItem)}
+                    >
+                      <Text className="text-sm text-primary-700 font-semibold" numberOfLines={1}>
+                        {displayName}
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => openDocumentPreview(docItem)}
+                      className="p-1.5"
+                      accessibilityLabel={t('previewUserDocument')}
+                    >
+                      <MaterialCommunityIcons name="eye-outline" size={18} color={colors.primary} />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => void downloadDocument(docItem)}
+                      className="p-1.5"
+                      disabled={downloadBusyId === docItem.id}
+                      accessibilityLabel={t('downloadUserDocument')}
+                    >
+                      {downloadBusyId === docItem.id ? (
+                        <ActivityIndicator size="small" color={colors.primary} />
+                      ) : (
+                        <MaterialCommunityIcons name="download" size={18} color={colors.primary} />
+                      )}
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => confirmDeleteDocument(docItem)} className="p-1.5">
+                      <MaterialCommunityIcons name="delete-outline" size={18} color={colors.danger} />
+                    </TouchableOpacity>
+                  </View>
+                  );
+                })
+              )}
+              <TouchableOpacity
+                onPress={uploadEmployeeDocument}
+                disabled={docsBusy}
+                className="bg-primary-50 border border-primary-100 rounded-xl h-10 items-center justify-center"
+              >
+                {docsBusy ? (
+                  <ActivityIndicator color={colors.primary} />
+                ) : (
+                  <Text className="text-primary-700 text-xs font-semibold">
+                    {t('uploadUserDocument')}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </View>
+
+            <Modal
+              visible={!!previewDoc}
+              transparent
+              animationType="fade"
+              onRequestClose={() => setPreviewDoc(null)}
+            >
+              <View className="flex-1 bg-black/60 justify-center px-4 py-8">
+                <View className="bg-white rounded-2xl overflow-hidden max-h-[90%]">
+                  <View className="flex-row items-center justify-between px-4 py-3 border-b border-surface-100">
+                    <Text className="flex-1 text-sm font-semibold text-surface-800 mr-2" numberOfLines={1}>
+                      {previewDoc ? decodeMojibakeFileName(previewDoc.name) : ''}
+                    </Text>
+                    <TouchableOpacity
+                      onPress={() => previewDoc && void downloadDocument(previewDoc)}
+                      className="px-2 py-1 mr-1"
+                    >
+                      <MaterialCommunityIcons name="download" size={20} color={colors.primary} />
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => setPreviewDoc(null)} className="px-2 py-1">
+                      <MaterialCommunityIcons name="close" size={22} color={colors.surface400} />
+                    </TouchableOpacity>
+                  </View>
+                  <View style={{ minHeight: 280, maxHeight: Dimensions.get('window').height * 0.7 }}>
+                    {previewDoc && isImageDocument(previewDoc.mimeType, previewDoc.name) ? (
+                      <ScrollView contentContainerStyle={{ padding: 12, alignItems: 'center' }}>
+                        <Image
+                          source={{ uri: previewDoc.url }}
+                          style={{ width: '100%', height: Math.min(520, Dimensions.get('window').height * 0.6) }}
+                          resizeMode="contain"
+                        />
+                      </ScrollView>
+                    ) : previewDoc && Platform.OS === 'web' && isPdfDocument(previewDoc.mimeType, previewDoc.name) ? (
+                      React.createElement('iframe', {
+                        src: previewDoc.url,
+                        title: decodeMojibakeFileName(previewDoc.name),
+                        style: {
+                          width: '100%',
+                          height: Math.min(560, Dimensions.get('window').height * 0.65),
+                          border: 'none',
+                        },
+                      })
+                    ) : (
+                      <View className="p-6 items-center">
+                        <Text className="text-sm text-surface-600 text-center mb-4">
+                          {t('userDocumentPreviewUnavailable')}
+                        </Text>
+                        <TouchableOpacity
+                          className="bg-primary-500 rounded-xl px-4 py-2"
+                          onPress={() => previewDoc && Linking.openURL(previewDoc.url)}
+                        >
+                          <Text className="text-white font-semibold">{t('openUserDocument')}</Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                  </View>
+                </View>
+              </View>
+            </Modal>
+
             <View className="flex-row">
               <TouchableOpacity
                 onPress={resetForm}

@@ -2,7 +2,7 @@
  * Admin Overview Screen
  */
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -10,11 +10,12 @@ import {
   RefreshControl,
   Pressable,
   Platform,
+  TextInput,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import Svg, { Circle } from 'react-native-svg';
 import { useAdminData } from '../../hooks/useAdminData';
+import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { useCompany } from '../../context/CompanyContext';
 import { formatTime, toDateString } from '../../utils/time';
@@ -23,7 +24,8 @@ import BarChart from '../../components/charts/BarChart';
 import { buildWeekAttendanceBars, lastNDateKeys } from '../../utils/reportAnalytics';
 import { useHolidays } from '../../hooks/useHolidays';
 import { findHolidayOnDate, holidayDateSet } from '../../utils/holidays';
-import type { EmployeeStatus } from '../../types';
+import { loadTenantRecords } from '../../utils/tenantScope';
+import type { Branch, Department, EmployeeStatus } from '../../types';
 import { colors } from '../../constants/colors';
 
 type EmployeeFilter = 'all' | 'checked-in' | 'absent';
@@ -38,38 +40,16 @@ function AttendanceRing({
   total: number;
 }) {
   const { t } = useLanguage();
-  const size = 112;
-  const stroke = 10;
-  const radius = (size - stroke) / 2;
-  const circumference = 2 * Math.PI * radius;
   const clampedRate = Math.max(0, Math.min(100, rate));
-  const offset = circumference - (clampedRate / 100) * circumference;
 
   return (
     <View className="flex-row items-center">
       <View className="w-[112px] h-[112px] items-center justify-center">
-        <Svg width={size} height={size} style={{ transform: [{ rotate: '-90deg' }] }}>
-          <Circle
-            cx={size / 2}
-            cy={size / 2}
-            r={radius}
-            stroke={colors.muted}
-            strokeWidth={stroke}
-            fill="none"
+        <View className="w-[96px] h-[96px] rounded-full bg-surface-100 items-center justify-center">
+          <View
+            className="absolute inset-2 rounded-full"
+            style={{ backgroundColor: colors.primary50 }}
           />
-          <Circle
-            cx={size / 2}
-            cy={size / 2}
-            r={radius}
-            stroke={colors.accent}
-            strokeWidth={stroke}
-            fill="none"
-            strokeDasharray={`${circumference} ${circumference}`}
-            strokeDashoffset={offset}
-            strokeLinecap="round"
-          />
-        </Svg>
-        <View className="absolute items-center">
           <Text className="text-2xl font-bold text-surface-800">{Math.round(clampedRate)}%</Text>
           <Text className="text-surface-400 text-[10px] font-semibold uppercase mt-0.5">
             {t('attendanceRate')}
@@ -144,7 +124,7 @@ function FilterChip({
       android_ripple={
         Platform.OS === 'android' ? { color: 'rgba(30,58,95,0.12)' } : undefined
       }
-      className={`px-4 py-2 rounded-full mr-2 ${
+      className={`px-4 py-2 rounded-full mr-2 mb-2 ${
         active ? 'bg-primary-500' : 'bg-white border border-surface-200'
       }`}
       style={({ pressed }) =>
@@ -186,7 +166,11 @@ function EmployeeRow({ employee }: { employee: EmployeeStatus }) {
 
       <View className="flex-1 ml-3">
         <Text className="text-surface-800 font-semibold text-sm">{employee.fullName}</Text>
-        <Text className="text-surface-400 text-xs mt-0.5">{employee.employeeId}</Text>
+        <Text className="text-surface-400 text-xs mt-0.5">
+          {employee.employeeId}
+          {employee.branchName ? ` · ${employee.branchName}` : ''}
+          {employee.department ? ` · ${employee.department}` : ''}
+        </Text>
       </View>
 
       {employee.isCheckedIn && employee.clockInTime ? (
@@ -207,42 +191,82 @@ function EmployeeRow({ employee }: { employee: EmployeeStatus }) {
 
 export default function AdminOverviewScreen() {
   const { t, language } = useLanguage();
+  const { user } = useAuth();
   const { tenant } = useCompany();
   const { employees, stats, weekRecords, isRefreshing, refresh } = useAdminData();
   const { holidays } = useHolidays();
+  const tenantId = user?.tenantId || tenant.id || 'default';
   const [filter, setFilter] = useState<EmployeeFilter>('all');
+  const [branchId, setBranchId] = useState('');
+  const [departmentId, setDepartmentId] = useState('');
+  const [search, setSearch] = useState('');
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
   const todayKey = toDateString();
   const todayHoliday = findHolidayOnDate(todayKey, holidays);
-  const absentCount = todayHoliday ? 0 : stats.absentCount;
 
-  const attendanceRate =
-    stats.totalEmployees > 0
-      ? Math.round((stats.checkedInCount / stats.totalEmployees) * 100)
-      : 0;
+  useEffect(() => {
+    void (async () => {
+      const [branchRows, deptRows] = await Promise.all([
+        loadTenantRecords<Branch>('branches', tenantId),
+        loadTenantRecords<Department>('departments', tenantId),
+      ]);
+      setBranches(branchRows.filter((b) => b.active !== false).sort((a, b) => a.name.localeCompare(b.name)));
+      setDepartments(
+        deptRows.filter((d) => d.active !== false).sort((a, b) => a.name.localeCompare(b.name)),
+      );
+    })();
+  }, [tenantId]);
+
+  const scopedEmployees = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return employees.filter((employee) => {
+      if (branchId && employee.branchId !== branchId) return false;
+      if (departmentId && employee.departmentId !== departmentId) return false;
+      if (q) {
+        const name = (employee.fullName || '').toLowerCase();
+        const id = (employee.employeeId || '').toLowerCase();
+        if (!name.includes(q) && !id.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [employees, branchId, departmentId, search]);
 
   const filteredEmployees = useMemo(() => {
     switch (filter) {
       case 'checked-in':
-        return employees.filter((employee) => employee.isCheckedIn);
+        return scopedEmployees.filter((employee) => employee.isCheckedIn);
       case 'absent':
-        return todayHoliday ? [] : employees.filter((employee) => !employee.isCheckedIn);
+        return todayHoliday ? [] : scopedEmployees.filter((employee) => !employee.isCheckedIn);
       default:
-        return employees;
+        return scopedEmployees;
     }
-  }, [employees, filter, todayHoliday]);
+  }, [scopedEmployees, filter, todayHoliday]);
+
+  const scopedCheckedIn = scopedEmployees.filter((e) => e.isCheckedIn).length;
+  const scopedAbsent = todayHoliday ? 0 : Math.max(0, scopedEmployees.length - scopedCheckedIn);
+  const attendanceRate =
+    scopedEmployees.length > 0
+      ? Math.round((scopedCheckedIn / scopedEmployees.length) * 100)
+      : 0;
+
+  const deptOptions = useMemo(
+    () => (branchId ? departments.filter((d) => d.branchId === branchId) : departments),
+    [departments, branchId],
+  );
 
   const weekBars = useMemo(() => {
     const locale = language === 'ar' ? 'ar-EG' : 'en-US';
     const weekDates = lastNDateKeys(7);
     return buildWeekAttendanceBars({
       dates: weekDates,
-      userIds: new Set(employees.map((e) => e.uid)),
+      userIds: new Set(scopedEmployees.map((e) => e.uid)),
       attendance: weekRecords,
       weeklyOffDays: tenant.workSchedule?.weeklyOffDays,
       holidayDates: holidayDateSet(holidays, weekDates[0], weekDates[weekDates.length - 1]),
       locale,
     });
-  }, [employees, weekRecords, tenant.workSchedule?.weeklyOffDays, language, holidays]);
+  }, [scopedEmployees, weekRecords, tenant.workSchedule?.weeklyOffDays, language, holidays]);
 
   return (
     <SafeAreaView className="flex-1 bg-surface-50" edges={['top']}>
@@ -266,8 +290,8 @@ export default function AdminOverviewScreen() {
             <View className="bg-white rounded-3xl p-5 mb-4 border border-surface-100">
               <AttendanceRing
                 rate={attendanceRate}
-                checkedIn={stats.checkedInCount}
-                total={stats.totalEmployees}
+                checkedIn={scopedCheckedIn}
+                total={scopedEmployees.length || stats.totalEmployees}
               />
               <View className="mt-5 pt-4 border-t border-surface-100">
                 <Text className="text-xs font-semibold text-surface-500 mb-2">{t('last7Days')}</Text>
@@ -293,19 +317,19 @@ export default function AdminOverviewScreen() {
             <View className="flex-row gap-3 mb-3">
               <StatCard
                 label={t('totalEmployees')}
-                value={stats.totalEmployees}
+                value={scopedEmployees.length || stats.totalEmployees}
                 icon="account-group-outline"
                 accent="primary"
               />
               <StatCard
                 label={t('checkedIn')}
-                value={stats.checkedInCount}
+                value={scopedCheckedIn}
                 icon="check-circle-outline"
                 accent="accent"
               />
               <StatCard
                 label={t('absent')}
-                value={absentCount}
+                value={scopedAbsent}
                 icon="close-circle-outline"
                 accent="danger"
               />
@@ -320,7 +344,63 @@ export default function AdminOverviewScreen() {
               </View>
             )}
 
-            <View className="flex-row mb-4">
+            <TextInput
+              className="bg-white border border-surface-200 rounded-xl px-3 h-11 mb-3"
+              placeholder={t('overviewSearchPlaceholder')}
+              value={search}
+              onChangeText={setSearch}
+              placeholderTextColor="#94A3B8"
+            />
+
+            {branches.length > 0 && (
+              <View className="mb-2">
+                <Text className="text-xs text-surface-400 mb-1">{t('filterByBranch')}</Text>
+                <View className="flex-row flex-wrap">
+                  <FilterChip
+                    label={t('filterAllBranches')}
+                    active={!branchId}
+                    onPress={() => {
+                      setBranchId('');
+                      setDepartmentId('');
+                    }}
+                  />
+                  {branches.map((b) => (
+                    <FilterChip
+                      key={b.id}
+                      label={b.name}
+                      active={branchId === b.id}
+                      onPress={() => {
+                        setBranchId(b.id);
+                        setDepartmentId('');
+                      }}
+                    />
+                  ))}
+                </View>
+              </View>
+            )}
+
+            {deptOptions.length > 0 && (
+              <View className="mb-2">
+                <Text className="text-xs text-surface-400 mb-1">{t('filterByDepartment')}</Text>
+                <View className="flex-row flex-wrap">
+                  <FilterChip
+                    label={t('filterAllDepartments')}
+                    active={!departmentId}
+                    onPress={() => setDepartmentId('')}
+                  />
+                  {deptOptions.map((d) => (
+                    <FilterChip
+                      key={d.id}
+                      label={d.name}
+                      active={departmentId === d.id}
+                      onPress={() => setDepartmentId(d.id)}
+                    />
+                  ))}
+                </View>
+              </View>
+            )}
+
+            <View className="flex-row flex-wrap mb-4">
               <FilterChip
                 label={t('all')}
                 active={filter === 'all'}
@@ -341,7 +421,7 @@ export default function AdminOverviewScreen() {
             <View className="flex-row items-center justify-between mb-2">
               <Text className="text-surface-800 font-bold text-base">{t('allEmployees')}</Text>
               <Text className="text-surface-400 text-xs">
-                {t('peopleCount', { count: filteredEmployees.length })}
+                {t('reportRowsCount', { count: filteredEmployees.length })}
               </Text>
             </View>
           </View>
@@ -349,21 +429,10 @@ export default function AdminOverviewScreen() {
         data={filteredEmployees}
         keyExtractor={(item) => item.uid}
         renderItem={({ item }) => <EmployeeRow employee={item} />}
-        contentContainerStyle={{ paddingHorizontal: 24, paddingBottom: 24 }}
-        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingHorizontal: 24, paddingBottom: 32 }}
+        refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={refresh} />}
         ListEmptyComponent={
-          <View className="bg-white rounded-2xl p-8 items-center border border-surface-100">
-            <MaterialCommunityIcons name="account-search-outline" size={36} color={colors.inactive} />
-            <Text className="text-surface-400 text-sm mt-3 text-center">{t('noFilterResults')}</Text>
-          </View>
-        }
-        refreshControl={
-          <RefreshControl
-            refreshing={isRefreshing}
-            onRefresh={refresh}
-            tintColor={colors.primary}
-            colors={[colors.primary]}
-          />
+          <Text className="text-center text-surface-400 mt-6">{t('noFilterResults')}</Text>
         }
       />
     </SafeAreaView>

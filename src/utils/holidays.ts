@@ -7,7 +7,7 @@ import type { Holiday } from '../types';
 
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
 
-function toYmd(d: Date): string {
+function formatYmd(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
@@ -21,7 +21,7 @@ function addDaysYmd(ymd: string, days: number): string {
   const d = parseYmd(ymd);
   if (!d) return ymd;
   d.setDate(d.getDate() + days);
-  return toYmd(d);
+  return formatYmd(d);
 }
 
 function inclusiveDayCount(startYmd: string, endYmd: string): number {
@@ -87,16 +87,17 @@ export function isHolidayDate(dateYmd: string, holidays: Holiday[]): boolean {
 export function holidayDateSet(
   holidays: Holiday[],
   fromYmd: string,
-  toYmd: string,
+  untilYmd: string,
 ): Set<string> {
   const out = new Set<string>();
-  if (!fromYmd || !toYmd) return out;
+  if (!fromYmd || !untilYmd) return out;
   const cursor = parseYmd(fromYmd);
-  const last = parseYmd(toYmd);
+  const last = parseYmd(untilYmd);
   if (!cursor || !last) return out;
+  const list = Array.isArray(holidays) ? holidays : [];
   while (cursor <= last) {
-    const key = toYmd(cursor);
-    if (holidays.some((h) => holidayOccursOn(h, key))) out.add(key);
+    const key = formatYmd(cursor);
+    if (list.some((h) => holidayOccursOn(h, key))) out.add(key);
     cursor.setDate(cursor.getDate() + 1);
   }
   return out;

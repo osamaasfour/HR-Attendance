@@ -98,7 +98,7 @@ export default function DateField({
         activeOpacity={0.85}
         className="border border-surface-200 rounded-xl px-3 h-11 flex-row items-center justify-between bg-white"
       >
-        <Text className={`text-base ${selected ? 'text-surface-800' : 'text-surface-300'}`}>
+        <Text className={`text-base ${selected ? 'text-surface-800' : 'text-surface-500'}`}>
           {display}
         </Text>
         <MaterialCommunityIcons name="calendar-month-outline" size={22} color="#64748B" />

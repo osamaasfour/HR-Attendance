@@ -1,0 +1,31 @@
+# Host networking so nginx can reach 127.0.0.1:3002
+# Shares the same Firebase service account as zkteco-adms.
+
+services:
+  hr-documents:
+    build: .
+    container_name: hr-documents
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./secrets/firebase-sa.json:/run/secrets/firebase-sa.json:ro
+      - hr_documents_data:/data/hr-documents
+    environment:
+      PORT: "3002"
+      FIREBASE_PROJECT_ID: "${FIREBASE_PROJECT_ID:-ecf-hr}"
+      GOOGLE_APPLICATION_CREDENTIALS: "/run/secrets/firebase-sa.json"
+      DOCUMENTS_DIR: "/data/hr-documents"
+      PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:-https://hr.ecfshipment.com}"
+      MAX_FILE_BYTES: "${MAX_FILE_BYTES:-52428800}"
+      CORS_ORIGINS: "${CORS_ORIGINS:-https://ecf-hr.web.app,https://ecf-hr.firebaseapp.com,http://localhost:8081,http://localhost:19006}"
+      TZ: "UTC"
+    env_file:
+      - .env
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  hr_documents_data:

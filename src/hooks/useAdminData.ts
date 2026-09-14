@@ -4,9 +4,6 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import {
-  db,
-  collection,
-  query,
   where,
   getDocs,
   onSnapshot,
@@ -14,6 +11,7 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { toDateString } from '../utils/time';
 import { lastNDateKeys } from '../utils/reportAnalytics';
+import { loadTenantRecords, tenantQuery } from '../utils/tenantScope';
 import type { EmployeeStatus, DailyStats, AttendanceRecord, UserData } from '../types';
 
 export function useAdminData(selectedDate?: string) {
@@ -47,6 +45,10 @@ export function useAdminData(selectedDate?: string) {
         employeeId: u.employeeId || '—',
         isCheckedIn: false,
         clockInTime: undefined,
+        branchId: u.branchId,
+        departmentId: u.departmentId,
+        branchName: u.branchName,
+        department: u.department,
       }));
 
       const clockedInUids = new Set<string>();
@@ -72,28 +74,24 @@ export function useAdminData(selectedDate?: string) {
   );
 
   const fetchUsers = useCallback(async () => {
-    const usersSnapshot = await getDocs(collection(db, 'users'));
-    const users = usersSnapshot.docs
-      .map((d) => ({ ...(d.data() as UserData), uid: d.id }))
-      .filter((u) => (u.tenantId || 'default') === tenantId);
+    const users = await loadTenantRecords<UserData>('users', tenantId, 'uid');
     setAllUsers(users);
     return users;
   }, [tenantId]);
 
   const fetchWeekRecords = useCallback(async () => {
     const start = lastNDateKeys(7)[0];
-    const weekQuery = query(
-      collection(db, 'attendance'),
+    const weekQuery = tenantQuery(
+      'attendance',
+      tenantId,
       where('date', '>=', start),
       where('date', '<=', dateKey),
     );
     const snap = await getDocs(weekQuery);
-    const records = snap.docs
-      .map((docSnap) => ({
-        ...(docSnap.data() as AttendanceRecord),
-        id: docSnap.id,
-      }))
-      .filter((a) => (a.tenantId || 'default') === tenantId || !a.tenantId);
+    const records = snap.docs.map((docSnap) => ({
+      ...(docSnap.data() as AttendanceRecord),
+      id: docSnap.id,
+    }));
     setWeekRecords(records);
   }, [dateKey, tenantId]);
 
@@ -101,8 +99,9 @@ export function useAdminData(selectedDate?: string) {
     setIsRefreshing(true);
     try {
       const users = await fetchUsers();
-      const attendanceQuery = query(
-        collection(db, 'attendance'),
+      const attendanceQuery = tenantQuery(
+        'attendance',
+        tenantId,
         where('date', '==', dateKey),
       );
       const attendanceSnapshot = await getDocs(attendanceQuery);
@@ -118,7 +117,7 @@ export function useAdminData(selectedDate?: string) {
       setIsRefreshing(false);
       setIsLoading(false);
     }
-  }, [dateKey, fetchUsers, mergeData, fetchWeekRecords]);
+  }, [dateKey, tenantId, fetchUsers, mergeData, fetchWeekRecords]);
 
   useEffect(() => {
     let unsub = () => {};
@@ -128,8 +127,9 @@ export function useAdminData(selectedDate?: string) {
       try {
         const users = await fetchUsers();
         if (cancelled) return;
-        const attendanceQuery = query(
-          collection(db, 'attendance'),
+        const attendanceQuery = tenantQuery(
+          'attendance',
+          tenantId,
           where('date', '==', dateKey),
         );
         unsub = onSnapshot(
@@ -158,7 +158,7 @@ export function useAdminData(selectedDate?: string) {
       cancelled = true;
       unsub();
     };
-  }, [dateKey, fetchUsers, mergeData, fetchWeekRecords]);
+  }, [dateKey, tenantId, fetchUsers, mergeData, fetchWeekRecords]);
 
   return {
     employees,

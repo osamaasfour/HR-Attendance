@@ -3,10 +3,11 @@
  */
 
 import React, { useEffect } from 'react';
-import { View, ActivityIndicator, Platform } from 'react-native';
+import { View, ActivityIndicator, Platform, StyleSheet } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { useFonts } from 'expo-font';
+import { enableScreens } from 'react-native-screens';
 import '../global.css';
 import { AuthProvider } from './context/AuthContext';
 import { AlertProvider } from './context/AlertContext';
@@ -15,7 +16,27 @@ import { LanguageProvider } from './context/LanguageContext';
 import { CompanyProvider } from './context/CompanyContext';
 import { RootNavigator } from './navigation/RootNavigator';
 import { LicenseExpiryWatcher } from './components/LicenseExpiryWatcher';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { colors } from './constants/colors';
+
+if (Platform.OS === 'web') {
+  enableScreens(false);
+}
+
+const WEB_ROOT_CSS = `
+html, body, #root {
+  height: 100% !important;
+  min-height: 100% !important;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+}
+body { overflow: hidden; }
+#root {
+  display: flex;
+  flex-direction: column;
+}
+`;
 
 function useWebViewportFitCover() {
   useEffect(() => {
@@ -30,8 +51,21 @@ function useWebViewportFitCover() {
       'content',
       'width=device-width, initial-scale=1, shrink-to-fit=no, viewport-fit=cover',
     );
+    if (!document.getElementById('hr-web-root-css')) {
+      const style = document.createElement('style');
+      style.id = 'hr-web-root-css';
+      style.textContent = WEB_ROOT_CSS;
+      document.head.appendChild(style);
+    }
   }, []);
 }
+
+const fill = StyleSheet.create({
+  root: {
+    flex: 1,
+    ...(Platform.OS === 'web' ? { height: '100%', minHeight: '100%' } : null),
+  },
+}).root;
 
 export default function App() {
   useWebViewportFitCover();
@@ -56,20 +90,24 @@ export default function App() {
   }
 
   return (
-    <SafeAreaProvider>
-      <StatusBar style="dark" backgroundColor="#FFFFFF" />
-      <LanguageProvider>
-        <AlertProvider>
-          <AuthProvider>
-            <CompanyProvider>
-              <AttendanceProvider>
-                <LicenseExpiryWatcher />
-                <RootNavigator />
-              </AttendanceProvider>
-            </CompanyProvider>
-          </AuthProvider>
-        </AlertProvider>
-      </LanguageProvider>
-    </SafeAreaProvider>
+    <View style={fill}>
+      <SafeAreaProvider style={fill}>
+        <ErrorBoundary>
+          <StatusBar style="dark" backgroundColor="#FFFFFF" />
+          <LanguageProvider>
+            <AlertProvider>
+              <AuthProvider>
+                <CompanyProvider>
+                  <AttendanceProvider>
+                    <LicenseExpiryWatcher />
+                    <RootNavigator />
+                  </AttendanceProvider>
+                </CompanyProvider>
+              </AuthProvider>
+            </AlertProvider>
+          </LanguageProvider>
+        </ErrorBoundary>
+      </SafeAreaProvider>
+    </View>
   );
 }

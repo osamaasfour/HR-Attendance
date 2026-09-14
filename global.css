@@ -3,3 +3,9 @@
 @tailwind utilities;
 
 /* NativeWind v4 global CSS entry point */
+
+html, body, #root {
+  height: 100%;
+  min-height: 100%;
+  width: 100%;
+}

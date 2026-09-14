@@ -288,13 +288,15 @@ export function useAttendance() {
       ];
     }
     try {
-      const snap = await getDocs(collection(db, 'workLocations'));
+      const docs = await Promise.all(
+        assignedIds.map((id) => getDoc(doc(db, 'workLocations', id))),
+      );
       const tid = user?.tenantId || 'default';
-      return snap.docs
+      return docs
+        .filter((d) => d.exists())
         .map((d) => ({ ...(d.data() as WorkLocation), id: d.id }))
         .filter(
           (loc) =>
-            assignedIds.includes(loc.id) &&
             loc.active !== false &&
             (loc.tenantId || 'default') === tid,
         )

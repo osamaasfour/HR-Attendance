@@ -3,7 +3,7 @@
  */
 
 import React from 'react';
-import { ActivityIndicator, View, Text } from 'react-native';
+import { ActivityIndicator, Platform, View, Text } from 'react-native';
 import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useAuth } from '../context/AuthContext';
@@ -19,6 +19,11 @@ import PayslipDetailScreen from '../screens/shared/PayslipDetail';
 import { colors } from '../constants/colors';
 
 const Stack = createNativeStackNavigator();
+
+const fillStyle = {
+  flex: 1,
+  ...(Platform.OS === 'web' ? { height: '100%', minHeight: '100%' } : null),
+} as const;
 
 const AppTheme = {
   ...DefaultTheme,
@@ -36,7 +41,14 @@ const AppTheme = {
 function LoadingScreen() {
   const { t } = useLanguage();
   return (
-    <View className="flex-1 bg-white items-center justify-center">
+    <View
+      style={{
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#FFFFFF',
+      }}
+    >
       <View className="w-20 h-20 rounded-full bg-primary-500 items-center justify-center mb-4">
         <ActivityIndicator size="large" color="white" />
       </View>
@@ -49,59 +61,54 @@ export function RootNavigator() {
   const { user, isLoading } = useAuth();
   const { t } = useLanguage();
 
-  if (isLoading) {
-    return <LoadingScreen />;
-  }
-
-  if (!user) {
-    return (
+  return (
+    <View style={fillStyle}>
       <NavigationContainer theme={AppTheme}>
         <Stack.Navigator
-          initialRouteName="Login"
           screenOptions={{
             headerShown: false,
-            contentStyle: { backgroundColor: '#FFFFFF' },
-            animation: 'slide_from_right',
+            animation: Platform.OS === 'web' ? 'none' : 'slide_from_right',
+            contentStyle: {
+              backgroundColor: user ? '#F8FAFC' : '#FFFFFF',
+              flex: 1,
+            },
           }}
         >
-          <Stack.Screen name="Login" component={LoginScreen} />
-          <Stack.Screen name="Signup" component={SignupScreen} />
+          {isLoading ? (
+            <Stack.Screen name="Boot" component={LoadingScreen} />
+          ) : !user ? (
+            <>
+              <Stack.Screen name="Login" component={LoginScreen} />
+              <Stack.Screen name="Signup" component={SignupScreen} />
+            </>
+          ) : (
+            <>
+              {user.role === 'admin' ? (
+                <Stack.Screen name="AdminTabs" component={AdminTabs} />
+              ) : user.role === 'manager' ? (
+                <Stack.Screen name="ManagerTabs" component={ManagerTabs} />
+              ) : (
+                <Stack.Screen name="EmployeeTabs" component={EmployeeTabs} />
+              )}
+              <Stack.Screen
+                name="Notifications"
+                component={NotificationsScreen}
+                options={{ headerShown: true, title: t('notifications') }}
+              />
+              <Stack.Screen
+                name="OrgChart"
+                component={OrgChartScreen}
+                options={{ headerShown: true, title: t('organization') }}
+              />
+              <Stack.Screen
+                name="PayslipDetail"
+                component={PayslipDetailScreen}
+                options={{ headerShown: true, title: t('payslipDetail') }}
+              />
+            </>
+          )}
         </Stack.Navigator>
       </NavigationContainer>
-    );
-  }
-
-  return (
-    <NavigationContainer theme={AppTheme}>
-      <Stack.Navigator
-        screenOptions={{
-          headerShown: false,
-          contentStyle: { backgroundColor: '#F8FAFC' },
-        }}
-      >
-        {user.role === 'admin' ? (
-          <Stack.Screen name="AdminTabs" component={AdminTabs} />
-        ) : user.role === 'manager' ? (
-          <Stack.Screen name="ManagerTabs" component={ManagerTabs} />
-        ) : (
-          <Stack.Screen name="EmployeeTabs" component={EmployeeTabs} />
-        )}
-        <Stack.Screen
-          name="Notifications"
-          component={NotificationsScreen}
-          options={{ headerShown: true, title: t('notifications') }}
-        />
-        <Stack.Screen
-          name="OrgChart"
-          component={OrgChartScreen}
-          options={{ headerShown: true, title: t('organization') }}
-        />
-        <Stack.Screen
-          name="PayslipDetail"
-          component={PayslipDetailScreen}
-          options={{ headerShown: true, title: t('payslipDetail') }}
-        />
-      </Stack.Navigator>
-    </NavigationContainer>
+    </View>
   );
 }

@@ -1,16 +1,32 @@
 /**
- * Spark-compatible outbound email via EmailJS HTTPS API.
- * Settings are scoped per tenant: payrollSettings/smtp or smtp_{tenantId}.
+ * Outbound email via EmailJS HTTPS (Spark-compatible, no SMTP from the client).
+ * Public IDs live in emailPublic/{tenantId} so employees can send.
+ * privateKey stays on admin-only payrollSettings and is never loaded for send.
  */
-import { db, doc, getDoc } from '../services/firebase';
+import { db, doc, getDoc, setDoc } from '../services/firebase';
 import type { EmailSettings } from '../types';
 import { DEFAULT_EMAIL_SETTINGS, DEFAULT_TENANT_ID } from '../types';
+import {
+  escapeHtml,
+  isValidEmail,
+  normalizeEmail,
+  sanitizeHeaderValue,
+} from './email';
 
 const EMAILJS_URL = 'https://api.emailjs.com/api/v1.0/email/send';
+const FETCH_TIMEOUT_MS = 20_000;
+const MAX_SUBJECT = 200;
+const MAX_TEXT = 20_000;
+
+export { escapeHtml, isValidEmail, normalizeEmail };
 
 export function emailSettingsDocId(tenantId?: string): string {
   const tid = tenantId || DEFAULT_TENANT_ID;
   return tid === DEFAULT_TENANT_ID ? 'smtp' : `smtp_${tid}`;
+}
+
+export function emailPublicDocId(tenantId?: string): string {
+  return tenantId?.trim() || DEFAULT_TENANT_ID;
 }
 
 /** Payroll formula settings doc id (default tenant uses `default`). */
@@ -19,10 +35,69 @@ export function payrollSettingsDocId(tenantId?: string): string {
   return tid === DEFAULT_TENANT_ID ? 'default' : tid;
 }
 
+export function toPublicEmailSettings(settings: EmailSettings, tenantId?: string): EmailSettings {
+  return {
+    enabled: !!settings.enabled,
+    provider: 'emailjs',
+    tenantId: tenantId || settings.tenantId,
+    publicKey: (settings.publicKey || '').trim(),
+    serviceId: (settings.serviceId || '').trim(),
+    templateId: (settings.templateId || '').trim(),
+    fromEmail: settings.fromEmail || '',
+    fromName: settings.fromName,
+    updatedAt: settings.updatedAt,
+    updatedBy: settings.updatedBy,
+  };
+}
+
+export async function publishEmailPublic(
+  tenantId: string,
+  settings: EmailSettings,
+): Promise<void> {
+  const tid = emailPublicDocId(tenantId);
+  const pub = toPublicEmailSettings(settings, tid);
+  await setDoc(
+    doc(db, 'emailPublic', tid),
+    {
+      enabled: pub.enabled,
+      provider: 'emailjs',
+      tenantId: tid,
+      publicKey: pub.publicKey,
+      serviceId: pub.serviceId,
+      templateId: pub.templateId,
+      fromEmail: pub.fromEmail,
+      ...(pub.fromName ? { fromName: pub.fromName } : {}),
+      ...(pub.updatedAt ? { updatedAt: pub.updatedAt } : {}),
+      ...(pub.updatedBy ? { updatedBy: pub.updatedBy } : {}),
+    },
+    { merge: true },
+  );
+}
+
 export async function loadEmailSettings(tenantId?: string): Promise<EmailSettings> {
-  const snap = await getDoc(doc(db, 'payrollSettings', emailSettingsDocId(tenantId)));
-  if (!snap.exists()) return { ...DEFAULT_EMAIL_SETTINGS };
-  return { ...DEFAULT_EMAIL_SETTINGS, ...(snap.data() as EmailSettings) };
+  const tid = emailPublicDocId(tenantId);
+  try {
+    const pub = await getDoc(doc(db, 'emailPublic', tid));
+    if (pub.exists()) {
+      return { ...DEFAULT_EMAIL_SETTINGS, ...(pub.data() as EmailSettings), privateKey: undefined };
+    }
+  } catch {
+    /* permission or missing */
+  }
+  return { ...DEFAULT_EMAIL_SETTINGS };
+}
+
+/** Admin Settings only — may include privateKey from payrollSettings. */
+export async function loadAdminEmailSettings(tenantId?: string): Promise<EmailSettings> {
+  const tid = emailPublicDocId(tenantId);
+  const pub = await loadEmailSettings(tid);
+  try {
+    const snap = await getDoc(doc(db, 'payrollSettings', emailSettingsDocId(tid)));
+    if (!snap.exists()) return pub;
+    return { ...DEFAULT_EMAIL_SETTINGS, ...pub, ...(snap.data() as EmailSettings) };
+  } catch {
+    return pub;
+  }
 }
 
 function assertReady(settings: EmailSettings) {
@@ -34,15 +109,35 @@ function assertReady(settings: EmailSettings) {
   }
 }
 
+function mapEmailJsError(status: number): Error {
+  if (status === 401 || status === 403) {
+    return new Error('EmailJS rejected the API keys. If you set a Private Key, leave it empty for in-app HR mail.');
+  }
+  if (status === 429) {
+    return new Error('EmailJS rate limit reached. Try again later.');
+  }
+  return new Error(`Could not send email (${status}).`);
+}
+
 async function postEmailJs(body: Record<string, unknown>): Promise<void> {
-  const res = await fetch(EMAILJS_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const text = await res.text();
-  if (!res.ok) {
-    throw new Error(text || `EmailJS error (${res.status})`);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(EMAILJS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    await res.text().catch(() => '');
+    if (!res.ok) throw mapEmailJsError(res.status);
+  } catch (e) {
+    if (e instanceof Error && e.name === 'AbortError') {
+      throw new Error('Email request timed out.');
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -54,14 +149,24 @@ export async function sendAppEmail(params: {
   settings?: EmailSettings;
   tenantId?: string;
 }): Promise<void> {
-  const settings =
-    params.settings || (await loadEmailSettings(params.tenantId));
+  const provided = params.settings;
+  const settings = provided || (await loadEmailSettings(params.tenantId));
   assertReady(settings);
 
-  const to = params.to.trim().toLowerCase();
-  if (!to || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+  const to = normalizeEmail(params.to);
+  if (!isValidEmail(to)) {
     throw new Error('Valid recipient email is required.');
   }
+
+  const subject = sanitizeHeaderValue(params.subject, MAX_SUBJECT);
+  const text = params.text.trim().slice(0, MAX_TEXT);
+  if (!subject || !text) {
+    throw new Error('Subject and message are required.');
+  }
+
+  const fromEmail = isValidEmail(settings.fromEmail) ? normalizeEmail(settings.fromEmail) : to;
+  const fromName = sanitizeHeaderValue(settings.fromName || 'HR Attendance', 80);
+  const html = (params.html || `<p>${escapeHtml(text)}</p>`).slice(0, MAX_TEXT * 2);
 
   const payload: Record<string, unknown> = {
     service_id: settings.serviceId.trim(),
@@ -69,17 +174,18 @@ export async function sendAppEmail(params: {
     user_id: settings.publicKey.trim(),
     template_params: {
       to_email: to,
-      reply_to: settings.fromEmail || to,
-      from_name: settings.fromName || 'ECF HR',
-      from_email: settings.fromEmail || '',
-      subject: params.subject,
-      message: params.text,
-      html_message: params.html || params.text,
+      reply_to: fromEmail,
+      from_name: fromName,
+      from_email: fromEmail,
+      subject,
+      message: text,
+      html_message: html,
     },
   };
 
-  if (settings.privateKey?.trim()) {
-    payload.accessToken = settings.privateKey.trim();
+  // HR request send never uses privateKey. Admin test may pass it in `settings`.
+  if (provided?.privateKey?.trim()) {
+    payload.accessToken = provided.privateKey.trim();
   }
 
   await postEmailJs(payload);
@@ -100,7 +206,7 @@ export async function sendTestEmail(
   });
 }
 
-/** Fire-and-forget helper — never throws to callers (request flow must not fail on email). */
+/** Fire-and-forget — request flows must not fail if mail is down. */
 export async function trySendAppEmail(params: {
   to?: string | null;
   subject: string;
@@ -108,19 +214,17 @@ export async function trySendAppEmail(params: {
   html?: string;
   tenantId?: string;
 }): Promise<void> {
-  if (!params.to?.trim()) return;
+  if (!isValidEmail(params.to)) return;
   try {
-    const settings = await loadEmailSettings(params.tenantId);
-    if (!settings.enabled) return;
     await sendAppEmail({
-      to: params.to,
+      to: params.to as string,
       subject: params.subject,
       text: params.text,
       html: params.html,
-      settings,
       tenantId: params.tenantId,
     });
   } catch (e) {
-    console.warn('[Email] send skipped/failed', e);
+    console.warn('[Email] send skipped/failed');
+    if (__DEV__) console.warn(e);
   }
 }

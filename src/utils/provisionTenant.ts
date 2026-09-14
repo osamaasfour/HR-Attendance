@@ -8,14 +8,14 @@ import {
   collection,
   doc,
   getDoc,
-  getDocs,
   setDoc,
   addDoc,
   Timestamp,
 } from '../services/firebase';
-import { DEFAULT_TENANT_ID, resolveWorkSchedule, type Tenant } from '../types';
+import { DEFAULT_EMAIL_SETTINGS, DEFAULT_TENANT_ID, resolveWorkSchedule, type EmailSettings, type Tenant } from '../types';
 import { omitUndefined, updateTenant } from './tenants';
-import { emailSettingsDocId, payrollSettingsDocId } from './sendEmail';
+import { emailSettingsDocId, payrollSettingsDocId, publishEmailPublic } from './sendEmail';
+import { loadTenantDocs } from './tenantScope';
 
 export type CloneSummary = {
   payrollFormula: boolean;
@@ -27,27 +27,55 @@ export type CloneSummary = {
   workSchedule: boolean;
 };
 
-async function loadTenantScoped(
+const SECRET_KEYS = new Set([
+  'privateKey',
+  'accessToken',
+  'password',
+  'deviceSecret',
+  'smtpPassword',
+]);
+
+function cloneDocData(
+  source: Record<string, unknown>,
+  targetTenantId: string,
+  extraOmit: string[] = [],
+): Record<string, unknown> {
+  const data = { ...source };
+  delete data.id;
+  for (const key of extraOmit) delete data[key];
+  for (const key of SECRET_KEYS) delete data[key];
+  data.tenantId = targetTenantId;
+  data.updatedAt = Timestamp.now();
+  data.createdAt = data.createdAt || Timestamp.now();
+  return omitUndefined(data) as Record<string, unknown>;
+}
+
+async function cloneSimpleCollection(
   collectionName: string,
-  sourceTenantId: string,
-): Promise<Array<{ id: string; data: Record<string, unknown> }>> {
-  const snap = await getDocs(collection(db, collectionName));
-  return snap.docs
-    .map((d) => ({ id: d.id, data: d.data() as Record<string, unknown> }))
-    .filter((row) => (row.data.tenantId || DEFAULT_TENANT_ID) === sourceTenantId);
+  sourceId: string,
+  targetId: string,
+): Promise<number> {
+  const rows = await loadTenantDocs(collectionName, sourceId);
+  await Promise.all(
+    rows.map((row) =>
+      addDoc(collection(db, collectionName), cloneDocData(row.data, targetId)),
+    ),
+  );
+  return rows.length;
 }
 
 /**
  * Clone settings from sourceTenantId into targetTenantId (already created).
+ * EmailJS private keys are never copied.
  */
 export async function cloneTenantSettings(input: {
   sourceTenantId: string;
   targetTenantId: string;
-  /** Copy EmailJS keys — default false (secrets) */
+  /** Copy EmailJS public IDs — private keys are always stripped */
   includeEmailSettings?: boolean;
 }): Promise<CloneSummary> {
   const sourceId = input.sourceTenantId || DEFAULT_TENANT_ID;
-  const targetId = input.targetTenantId;
+  const targetId = input.targetTenantId?.trim();
   if (!targetId) throw new Error('Target tenant id is required.');
   if (sourceId === targetId) throw new Error('Source and target tenant must differ.');
 
@@ -61,7 +89,6 @@ export async function cloneTenantSettings(input: {
     workSchedule: false,
   };
 
-  // 1) Overlay workSchedule / locale-ish fields from source tenant doc
   const sourceTenantSnap = await getDoc(doc(db, 'tenants', sourceId));
   if (sourceTenantSnap.exists()) {
     const src = sourceTenantSnap.data() as Tenant;
@@ -70,101 +97,73 @@ export async function cloneTenantSettings(input: {
     if (src.timezone) patch.timezone = src.timezone;
     if (src.defaultLanguage) patch.defaultLanguage = src.defaultLanguage;
     if (src.locale) patch.locale = src.locale;
-    // Do not copy logoUrl / name / slug / license from template
     if (Object.keys(patch).length > 0) {
       await updateTenant(targetId, patch);
       summary.workSchedule = !!patch.workSchedule;
     }
   }
 
-  // 2) Payroll formula
   const formulaId = payrollSettingsDocId(sourceId);
   let formulaSnap = await getDoc(doc(db, 'payrollSettings', formulaId));
   if (!formulaSnap.exists() && sourceId === DEFAULT_TENANT_ID) {
     formulaSnap = await getDoc(doc(db, 'payrollSettings', 'default'));
   }
   if (formulaSnap.exists()) {
-    const data = { ...(formulaSnap.data() as Record<string, unknown>) };
-    delete data.id;
-    data.tenantId = targetId;
-    data.updatedAt = Timestamp.now();
-    await setDoc(
-      doc(db, 'payrollSettings', payrollSettingsDocId(targetId)),
-      omitUndefined(data),
-    );
+    const data = cloneDocData(formulaSnap.data() as Record<string, unknown>, targetId);
+    await setDoc(doc(db, 'payrollSettings', payrollSettingsDocId(targetId)), data);
     summary.payrollFormula = true;
   }
 
-  // 3) Email settings (optional)
   if (input.includeEmailSettings) {
     const emailSnap = await getDoc(doc(db, 'payrollSettings', emailSettingsDocId(sourceId)));
     if (emailSnap.exists()) {
-      const data = { ...(emailSnap.data() as Record<string, unknown>) };
-      data.updatedAt = Timestamp.now();
-      await setDoc(
-        doc(db, 'payrollSettings', emailSettingsDocId(targetId)),
-        omitUndefined(data),
-      );
+      const data = cloneDocData(emailSnap.data() as Record<string, unknown>, targetId, [
+        'updatedBy',
+        'privateKey',
+      ]);
+      data.enabled = false;
+      await setDoc(doc(db, 'payrollSettings', emailSettingsDocId(targetId)), data);
+      await publishEmailPublic(targetId, { ...DEFAULT_EMAIL_SETTINGS, ...data } as EmailSettings);
       summary.emailSettings = true;
     }
   }
 
-  // 4) Shifts
-  const shifts = await loadTenantScoped('workShifts', sourceId);
-  for (const row of shifts) {
-    const data = { ...row.data };
-    delete data.id;
-    data.tenantId = targetId;
-    data.updatedAt = Timestamp.now();
-    data.createdAt = data.createdAt || Timestamp.now();
-    await addDoc(collection(db, 'workShifts'), omitUndefined(data));
-    summary.workShifts += 1;
-  }
+  const [shifts, locations] = await Promise.all([
+    cloneSimpleCollection('workShifts', sourceId, targetId),
+    cloneSimpleCollection('workLocations', sourceId, targetId),
+  ]);
+  summary.workShifts = shifts;
+  summary.workLocations = locations;
 
-  // 5) Work locations
-  const locations = await loadTenantScoped('workLocations', sourceId);
-  for (const row of locations) {
-    const data = { ...row.data };
-    delete data.id;
-    data.tenantId = targetId;
-    data.updatedAt = Timestamp.now();
-    data.createdAt = data.createdAt || Timestamp.now();
-    await addDoc(collection(db, 'workLocations'), omitUndefined(data));
-    summary.workLocations += 1;
-  }
-
-  // 6) Branches → map old id → new id
-  const branches = await loadTenantScoped('branches', sourceId);
+  const branches = await loadTenantDocs('branches', sourceId);
   const branchIdMap = new Map<string, string>();
-  for (const row of branches) {
-    const data = { ...row.data };
-    delete data.id;
-    data.tenantId = targetId;
-    data.updatedAt = Timestamp.now();
-    data.createdAt = data.createdAt || Timestamp.now();
-    const ref = await addDoc(collection(db, 'branches'), omitUndefined(data));
-    branchIdMap.set(row.id, ref.id);
-    summary.branches += 1;
-  }
+  const branchResults = await Promise.all(
+    branches.map(async (row) => {
+      const ref = await addDoc(
+        collection(db, 'branches'),
+        cloneDocData(row.data, targetId),
+      );
+      return [row.id, ref.id] as const;
+    }),
+  );
+  for (const [oldId, newId] of branchResults) branchIdMap.set(oldId, newId);
+  summary.branches = branches.length;
 
-  // 7) Departments with remapped branchId
-  const departments = await loadTenantScoped('departments', sourceId);
-  for (const row of departments) {
-    const data = { ...row.data };
-    delete data.id;
-    data.tenantId = targetId;
+  const departments = await loadTenantDocs('departments', sourceId);
+  const deptsToWrite = departments.flatMap((row) => {
+    const data = cloneDocData(row.data, targetId);
     const oldBranch = typeof data.branchId === 'string' ? data.branchId : '';
     if (oldBranch && branchIdMap.has(oldBranch)) {
       data.branchId = branchIdMap.get(oldBranch);
     } else if (oldBranch) {
-      // Skip orphan dept if branch missing
-      continue;
+      return [];
     }
-    data.updatedAt = Timestamp.now();
-    data.createdAt = data.createdAt || Timestamp.now();
-    await addDoc(collection(db, 'departments'), omitUndefined(data));
-    summary.departments += 1;
-  }
+    return [data];
+  });
+  await Promise.all(
+    deptsToWrite.map((data) => addDoc(collection(db, 'departments'), data)),
+  );
+  summary.departments = deptsToWrite.length;
 
   return summary;
 }
